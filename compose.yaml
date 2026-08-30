@@ -1,0 +1,37 @@
+name: livability-agent
+
+services:
+  livability-agent-api:
+    build:
+      context: .
+    env_file:
+      - path: .env.backend
+        required: false
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 8091
+      OUTPUTS_DIR: /data/outputs
+    ports:
+      - "${LIVABILITY_API_BIND_ADDRESS:-127.0.0.1}:${LIVABILITY_API_PORT:-8091}:8091"
+    volumes:
+      - livability-outputs:/data/outputs
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8091/healthz', timeout=3)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  livability-outputs:

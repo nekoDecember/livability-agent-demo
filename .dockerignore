@@ -1,0 +1,11 @@
+.env
+.env.backend
+.git
+.pytest_cache
+.ruff_cache
+.uv-cache
+.venv
+__pycache__
+outputs
+tests
+*.pyc

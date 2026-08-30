@@ -1,0 +1,35 @@
+services:
+  livability-agent-api:
+    networks:
+      openwebui-agent-network:
+        aliases:
+          - livability-agent-api
+
+  register-livability-pipe:
+    image: python:3.12-slim
+    depends_on:
+      livability-agent-api:
+        condition: service_healthy
+    env_file:
+      - path: .env.backend
+        required: false
+      - path: ${OPENWEBUI_ADMIN_ENV_FILE:-../../platforms/openwebui-platform/.env.admin}
+        required: true
+    environment:
+      PIPE_PATH: /registration/livability_agent_pipe.py
+    volumes:
+      - ./openwebui/livability_agent_pipe.py:/registration/livability_agent_pipe.py:ro
+      - ./scripts/register_openwebui_pipe.py:/registration/register_openwebui_pipe.py:ro
+    command:
+      - python
+      - /registration/register_openwebui_pipe.py
+    networks:
+      - openwebui-agent-network
+    labels:
+      service-manager.lifecycle: oneshot
+    restart: "no"
+
+networks:
+  openwebui-agent-network:
+    external: true
+    name: openwebui-agent-network
