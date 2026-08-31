@@ -34,6 +34,9 @@ docker compose --env-file .env.backend \
 これは共有基盤側の資格情報で、このAgentの設定ファイルではありません。
 パスに既定値はありません。別の場所へcloneしても動くよう、
 `OPENWEBUI_ADMIN_ENV_FILE`で明示します。
+Compose内の`/registration`は登録用コンテナのパスです。
+ホストに`registration`ディレクトリを作る必要はありません。
+`openwebui/livability_agent_pipe.py`と`scripts/register_openwebui_pipe.py`をそこへmountします。
 
 APIキーとOpenWebUI登録を含む、このAgentの設定はすべて`.env.backend`に書きます。
 このAgentの実ファイルは`.env.backend`の1つだけで、Git管理しません。
