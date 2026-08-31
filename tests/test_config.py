@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from livability_demo.config import PROJECT_ROOT, Settings
@@ -21,6 +22,9 @@ def test_backend_environment_is_canonical_and_secret_free() -> None:
     assert values["LLM_MODE"] == "mock"
     assert values["OPENAI_API_KEY"] == ""
     assert values["OPENAI_MODEL"] == "gpt-5.6-luna"
+    assert values["LIVABILITY_API_BIND_ADDRESS"] == "127.0.0.1"
+    assert values["LIVABILITY_API_PORT"] == "8091"
+    assert values["OPENWEBUI_ADMIN_ENV_FILE"] == ""
 
 
 def test_local_backend_environment_matches_example_when_present() -> None:
@@ -37,5 +41,25 @@ def test_openwebui_override_uses_canonical_project_environment() -> None:
     override = (PROJECT_ROOT / "compose.openwebui.override.yaml").read_text(encoding="utf-8")
 
     assert "path: .env.backend" in override
+    assert "${OPENWEBUI_ADMIN_ENV_FILE:?" in override
+    assert "../../platforms/openwebui-platform" not in override
     assert ".env.openwebui" not in override
     assert not (PROJECT_ROOT / ".env.openwebui.example").exists()
+
+
+def test_example_covers_all_compose_variables() -> None:
+    compose = "\n".join(
+        (PROJECT_ROOT / name).read_text(encoding="utf-8")
+        for name in ("compose.yaml", "compose.openwebui.override.yaml")
+    )
+    compose_keys = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", compose))
+
+    assert compose_keys <= set(_env_values(PROJECT_ROOT / ".env.backend.example"))
+
+
+def test_docker_build_uses_locked_dependencies() -> None:
+    dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "COPY pyproject.toml uv.lock README.md" in dockerfile
+    assert "uv sync --locked --no-dev" in dockerfile
+    assert "pip install" not in dockerfile

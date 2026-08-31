@@ -7,7 +7,9 @@ APIキーを使わないモックモードがあります。
 
 ```sh
 cp .env.backend.example .env.backend
-docker compose up --build -d
+openssl rand -hex 32
+# 出力を.env.backendのLIVABILITY_API_KEYへ設定します。
+docker compose --env-file .env.backend up --build -d --wait
 ```
 
 APIは8091番で待ち受けます。
@@ -19,14 +21,22 @@ APIは8091番で待ち受けます。
 APIの名前は`livability-agent-api`です。
 
 ```sh
-docker compose -f compose.yaml -f compose.openwebui.override.yaml up --build -d
+# .env.backendのOPENWEBUI_ADMIN_ENV_FILEへ、OpenWebUI基盤の
+# .env.adminの絶対パスを設定してから実行します。
+docker compose --env-file .env.backend \
+  -f compose.yaml -f compose.openwebui.override.yaml \
+  up --build -d
 ```
 
 起動時に登録用コンテナがOpenWebUIへ管理者としてサインインし、
 `livability_agent` Pipeを作成または更新して有効化します。
 管理者情報はOpenWebUI基盤のGit管理外ファイル`.env.admin`から読みます。
 これは共有基盤側の資格情報で、このAgentの設定ファイルではありません。
+パスに既定値はありません。別の場所へcloneしても動くよう、
+`OPENWEBUI_ADMIN_ENV_FILE`で明示します。
 
 APIキーとOpenWebUI登録を含む、このAgentの設定はすべて`.env.backend`に書きます。
 このAgentの実ファイルは`.env.backend`の1つだけで、Git管理しません。
-Docker Composeと`uv run livability-*`のどちらも同じ`.env.backend`を読みます。
+Docker Composeでは必ず`--env-file .env.backend`を付けます。
+これにより、ポートなどのCompose変数とコンテナ内の設定が同じファイルから読み込まれます。
+`uv run livability-*`も同じ`.env.backend`を読みます。
