@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     devui_auto_open: bool = True
     devui_auth_enabled: bool = False
     mock_latency_ms: int = Field(default=300, ge=0, le=30_000)
+    data_timeout_seconds: float = Field(default=60, gt=0, le=600)
+    agent_timeout_seconds: float = Field(default=90, gt=0, le=600)
+    specialist_attempts: int = Field(default=2, ge=1, le=3)
 
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8091, ge=1, le=65535)
