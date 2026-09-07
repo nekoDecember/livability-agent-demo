@@ -14,6 +14,20 @@ docker compose --env-file .env.backend up --build -d --wait
 
 APIは8091番で待ち受けます。
 
+## 開発用の比較UI
+
+OpenWebUIの会話画面ではなく、候補地・評価軸・根拠・実行記録を横並びで確認する専用UIがあります。
+
+```sh
+cd frontend
+npm install
+npm run dev
+```
+
+ブラウザで`http://localhost:5173`を開きます。APIが起動していない場合も、開発用モックで画面を確認できます。
+
+APIを起動した状態では、UIは`/v1/agent/assessments/stream`のSSEから実際の進捗を受け取ります。
+
 ## OpenWebUIとの接続
 
 共有OpenWebUIを使う場合は、先にOpenWebUI基盤を起動します。

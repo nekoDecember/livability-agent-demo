@@ -86,3 +86,27 @@ async def test_openai_compatible_chat_completion(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["object"] == "chat.completion"
     assert "柏市 住みやすさ総合評価" in payload["choices"][0]["message"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_assessment_stream_emits_progress_and_result(tmp_path: Path) -> None:
+    app = create_app(_settings(tmp_path))
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            async with client.stream(
+                "POST",
+                "/v1/agent/assessments/stream",
+                json={"request": "流山市を評価して"},
+            ) as response:
+                body = "".join([chunk async for chunk in response.aiter_text()])
+
+    assert response.status_code == 200
+    assert "event: progress" in body
+    assert "受付・計画" in body
+    assert "event: result" in body
+    assert '"report_id"' in body
+    assert "event: done" in body

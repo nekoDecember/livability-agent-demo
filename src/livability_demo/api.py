@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -80,6 +81,13 @@ def _completion_json(
         "usage": _usage(prompt, text),
         "system_fingerprint": "livability-agent-v1",
     }
+
+
+def _sse_event(event: str, payload: Any) -> str:
+    return (
+        f"event: {event}\n"
+        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    )
 
 
 async def _completion_stream(
@@ -194,6 +202,59 @@ def create_app(
             enabled_axes=body.enabled_axes,
         )
         return AssessmentResponse(report=report, markdown=markdown)
+
+    @app.post("/v1/agent/assessments/stream", dependencies=[Depends(require_auth)])
+    async def assessment_stream(request: Request, body: AssessmentRequest):
+        queue: asyncio.Queue[str] = asyncio.Queue()
+
+        async def progress(message: str) -> None:
+            await queue.put(message)
+
+        task = asyncio.create_task(
+            request.app.state.orchestrator.assess(
+                body.request,
+                progress=progress,
+                enabled_axes=body.enabled_axes,
+            )
+        )
+
+        async def events() -> AsyncIterator[str]:
+            try:
+                while not task.done() or not queue.empty():
+                    try:
+                        message = await asyncio.wait_for(queue.get(), timeout=0.1)
+                    except TimeoutError:
+                        continue
+                    yield _sse_event("progress", {"message": message})
+
+                report, markdown = await task
+                yield _sse_event(
+                    "result",
+                    AssessmentResponse(report=report, markdown=markdown).model_dump(mode="json"),
+                )
+                yield _sse_event("done", {"report_id": report.report_id})
+            except asyncio.CancelledError:
+                if not task.done():
+                    task.cancel()
+                raise
+            except Exception as exc:
+                yield _sse_event(
+                    "error",
+                    {"message": str(exc), "type": type(exc).__name__},
+                )
+            finally:
+                if not task.done():
+                    task.cancel()
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.post("/v1/chat/completions", dependencies=[Depends(require_auth)])
     async def chat_completion(request: Request, body: ChatCompletionRequest):
