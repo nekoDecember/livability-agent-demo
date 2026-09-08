@@ -49,10 +49,6 @@ services:
         condition: service_healthy
     cap_drop:
       - ALL
-    # nginx creates its cache directories during startup; retain only the
-    # capability required for that ownership adjustment.
-    cap_add:
-      - CHOWN
     security_opt:
       - no-new-privileges:true
     pids_limit: 256

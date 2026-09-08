@@ -12,5 +12,11 @@ FROM nginx:1.27-alpine
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx-entrypoint.sh /usr/local/bin/livability-nginx-entrypoint
+
+RUN chmod 0555 /usr/local/bin/livability-nginx-entrypoint
+
+USER nginx
+ENTRYPOINT ["/usr/local/bin/livability-nginx-entrypoint"]
 
 EXPOSE 80
