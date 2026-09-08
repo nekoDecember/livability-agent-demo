@@ -10,6 +10,7 @@ services:
     environment:
       API_HOST: 0.0.0.0
       API_PORT: 8091
+      LIVABILITY_API_KEY: "${LIVABILITY_API_KEY:?Set LIVABILITY_API_KEY in .env.backend and pass --env-file .env.backend}"
       OUTPUTS_DIR: /data/outputs
     ports:
       - "${LIVABILITY_API_BIND_ADDRESS:-127.0.0.1}:${LIVABILITY_API_PORT:-8091}:8091"
@@ -39,9 +40,8 @@ services:
   livability-agent-frontend:
     build:
       context: ./frontend
-    env_file:
-      - path: .env.backend
-        required: false
+    environment:
+      LIVABILITY_API_KEY: "${LIVABILITY_API_KEY:?Set LIVABILITY_API_KEY in .env.backend and pass --env-file .env.backend}"
     ports:
       - "${LIVABILITY_FRONTEND_BIND_ADDRESS:-127.0.0.1}:${LIVABILITY_FRONTEND_PORT:-5173}:8080"
     depends_on:
