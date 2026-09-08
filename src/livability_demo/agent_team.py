@@ -1,21 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Sequence
 from typing import Any, Never
 
 from agent_framework import (
     Agent,
-    AgentExecutorRequest,
-    AgentExecutorResponse,
     Executor,
-    Message,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
     handler,
 )
 from agent_framework.openai import OpenAIChatClient
+from pydantic import BaseModel
 
 from .catalog import AXIS_AGENT_NAMES
 from .config import Settings
@@ -56,20 +55,84 @@ FINAL_EVALUATOR
 """.strip()
 
 
+class SpecialistInput(BaseModel):
+    evidence_by_axis: dict[Axis, AxisEvidence]
+
+
+class SpecialistOutcome(BaseModel):
+    axis: Axis
+    narrative: AxisNarrative
+    used_fallback: bool = False
+    detail: str = ""
+
+
+class SpecialistBatch(BaseModel):
+    outcomes: list[SpecialistOutcome]
+
+
 class SpecialistPromptDispatcher(Executor):
-    """Broadcast one assessment prompt to every specialist in the workflow graph."""
+    """Route typed evidence to host executors; each model sees only its own axis."""
 
     @handler
     async def dispatch(
         self,
-        prompt: str,
-        ctx: WorkflowContext[AgentExecutorRequest],
+        data: SpecialistInput,
+        ctx: WorkflowContext[SpecialistInput],
     ) -> None:
-        request = AgentExecutorRequest(
-            messages=[Message("user", [prompt])],
-            should_respond=True,
-        )
-        await ctx.send_message(request)
+        await ctx.send_message(data)
+
+
+class AxisSpecialistExecutor(Executor):
+    """Validate and recover one branch without discarding successful siblings."""
+
+    def __init__(self, axis: Axis, agent: Agent[Any], settings: Settings) -> None:
+        self.axis = axis
+        self.agent = agent
+        self.settings = settings
+        super().__init__(id=AXIS_AGENT_NAMES[axis])
+
+    @handler
+    async def analyze(
+        self,
+        data: SpecialistInput,
+        ctx: WorkflowContext[SpecialistOutcome],
+    ) -> None:
+        evidence = data.evidence_by_axis[self.axis]
+        payload = {"evidence_by_axis": {self.axis.value: evidence.model_dump(mode="json")}}
+        prompt = f"担当軸の証拠だけを分析してください。\n{PAYLOAD_MARKER}\n"
+        prompt += json.dumps(payload, ensure_ascii=False)
+        detail = ""
+        for attempt in range(self.settings.specialist_attempts):
+            try:
+                response = await asyncio.wait_for(
+                    self.agent.run(prompt, session=self.agent.create_session()),
+                    timeout=self.settings.agent_timeout_seconds,
+                )
+                value = response.value
+                narrative = (
+                    value if isinstance(value, AxisNarrative)
+                    else AxisNarrative.model_validate_json(response.text)
+                )
+                if narrative.axis != self.axis:
+                    raise ValueError(f"Expected specialist axis {self.axis.value}")
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+                if attempt + 1 < self.settings.specialist_attempts:
+                    # This branch is read-only. A fresh session avoids retaining invalid output.
+                    prompt = (
+                        f"前回の出力は検証に失敗しました。担当軸 {self.axis.value} の"
+                        f"AxisNarrativeだけを返してください。\n{PAYLOAD_MARKER}\n"
+                        + json.dumps(payload, ensure_ascii=False)
+                    )
+            else:
+                await ctx.send_message(SpecialistOutcome(axis=self.axis, narrative=narrative))
+                return
+        await ctx.send_message(SpecialistOutcome(
+            axis=self.axis,
+            narrative=build_axis_narrative(evidence),
+            used_fallback=True,
+            detail=detail,
+        ))
 
 
 class SpecialistResultAggregator(Executor):
@@ -82,17 +145,14 @@ class SpecialistResultAggregator(Executor):
     @handler
     async def aggregate(
         self,
-        responses: list[AgentExecutorResponse],
-        ctx: WorkflowContext[Never, dict[Axis, AxisNarrative]],
+        responses: list[SpecialistOutcome],
+        ctx: WorkflowContext[Never, SpecialistBatch],
     ) -> None:
         narratives: dict[Axis, AxisNarrative] = {}
         for response in responses:
-            value = response.agent_response.value
-            narrative = (
-                value
-                if isinstance(value, AxisNarrative)
-                else AxisNarrative.model_validate_json(response.agent_response.text)
-            )
+            narrative = response.narrative
+            if response.axis != narrative.axis:
+                raise RuntimeError("Specialist result does not match its assigned axis")
             if narrative.axis in narratives:
                 raise RuntimeError(f"Duplicate specialist result: {narrative.axis.value}")
             narratives[narrative.axis] = narrative
@@ -109,7 +169,7 @@ class SpecialistResultAggregator(Executor):
                 "Specialist workflow did not return: "
                 + ", ".join(sorted(axis.value for axis in missing))
             )
-        await ctx.yield_output(narratives)
+        await ctx.yield_output(SpecialistBatch(outcomes=responses))
 
 
 class AgentTeam:
@@ -148,7 +208,10 @@ class AgentTeam:
 
         dispatcher = SpecialistPromptDispatcher(id="SpecialistPromptDispatcher")
         aggregator = SpecialistResultAggregator(selected)
-        specialist_agents = [self.specialists[axis] for axis in selected]
+        specialist_agents = [
+            AxisSpecialistExecutor(axis, self.specialists[axis], self._settings)
+            for axis in selected
+        ]
         return (
             WorkflowBuilder(
                 start_executor=dispatcher,
@@ -181,39 +244,26 @@ class AgentTeam:
         enabled_axes = [axis for axis in Axis if axis in evidence_by_axis]
         if not enabled_axes:
             raise ValueError("At least one axis of evidence is required.")
-        payload = {
-            "evidence_by_axis": {
-                axis.value: evidence.model_dump(mode="json")
-                for axis, evidence in evidence_by_axis.items()
-            }
-        }
-        prompt = (
-            "選択された専門担当が、各自のSPECIALIST_AXISに該当する証拠だけを"
-            "分析してください。\n"
-            f"{PAYLOAD_MARKER}\n{json.dumps(payload, ensure_ascii=False)}"
+        for axis, evidence in evidence_by_axis.items():
+            if evidence.axis != axis:
+                raise ValueError("Evidence does not match the selected axis")
+        workflow = self.build_specialist_workflow(enabled_axes)
+        events = await workflow.run(SpecialistInput(evidence_by_axis=evidence_by_axis))
+        outputs = events.get_outputs()
+        if len(outputs) != 1 or not isinstance(outputs[0], SpecialistBatch):
+            raise RuntimeError("Specialist workflow returned an unexpected output.")
+        outcomes = outputs[0].outcomes
+        fallbacks = [outcome for outcome in outcomes if outcome.used_fallback]
+        detail = (
+            "WorkflowBuilderのfan-out/fan-inで"
+            f"{len(enabled_axes)}専門エージェントを並列実行: "
+            + "、".join(AXIS_LABELS[axis] for axis in enabled_axes)
         )
-
-        try:
-            workflow = self.build_specialist_workflow(enabled_axes)
-            events = await workflow.run(prompt)
-            outputs = events.get_outputs()
-            if len(outputs) != 1 or not isinstance(outputs[0], dict):
-                raise RuntimeError("Specialist workflow returned an unexpected output.")
-
-            narratives = outputs[0]
-            return (
-                narratives,
-                False,
-                "WorkflowBuilderのfan-out/fan-inで"
-                f"{len(enabled_axes)}専門エージェントを並列実行: "
-                + "、".join(AXIS_LABELS[axis] for axis in enabled_axes),
+        if fallbacks:
+            detail += " / 決定論的フォールバック: " + "、".join(
+                f"{AXIS_LABELS[item.axis]} ({item.detail})" for item in fallbacks
             )
-        except Exception as exc:
-            narratives = {
-                axis: build_axis_narrative(evidence)
-                for axis, evidence in evidence_by_axis.items()
-            }
-            return narratives, True, f"決定論的フォールバックを使用: {type(exc).__name__}: {exc}"
+        return {item.axis: item.narrative for item in outcomes}, bool(fallbacks), detail
 
     async def create_final_narrative(
         self,
@@ -235,9 +285,13 @@ class AgentTeam:
         )
 
         try:
-            response = await self.evaluator.run(
-                prompt,
-                options={"response_format": FinalNarrative},
+            response = await asyncio.wait_for(
+                self.evaluator.run(
+                    prompt,
+                    session=self.evaluator.create_session(),
+                    options={"response_format": FinalNarrative},
+                ),
+                timeout=self._settings.agent_timeout_seconds,
             )
             value = response.value
             if isinstance(value, FinalNarrative):
