@@ -25,6 +25,7 @@ jobs:
         env:
           LIVABILITY_API_KEY: ci-livability-key
           OPENWEBUI_ADMIN_ENV_FILE: .env.backend.example
+          PUBLIC_URL: https://ci.example.com
         run: |
           docker compose --env-file .env.backend.example config --quiet
           docker compose --env-file .env.backend.example \
