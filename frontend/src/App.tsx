@@ -139,8 +139,8 @@ function App() {
           <h1>住む場所の比較</h1>
         </div>
         <div className="topbar-meta">
-          <span className="status-chip">開発環境</span>
-          <span className="meta-mono">2026.09.08 / JST</span>
+          <span className="status-chip">専用フロント</span>
+          <span className="meta-mono">SSE / API</span>
         </div>
       </header>
 

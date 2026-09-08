@@ -21,11 +21,13 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run pytest
-      - name: Validate standalone and OpenWebUI Compose files
+      - name: Validate API, frontend, and OpenWebUI compatibility Compose files
         env:
           LIVABILITY_API_KEY: ci-livability-key
           OPENWEBUI_ADMIN_ENV_FILE: .env.backend.example
         run: |
           docker compose --env-file .env.backend.example config --quiet
+          docker compose --env-file .env.backend.example \
+            -f compose.yaml -f compose.public.yaml config --quiet
           docker compose --env-file .env.backend.example \
             -f compose.yaml -f compose.openwebui.override.yaml config --quiet

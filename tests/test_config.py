@@ -24,6 +24,9 @@ def test_backend_environment_is_canonical_and_secret_free() -> None:
     assert values["OPENAI_MODEL"] == "gpt-5.6-luna"
     assert values["LIVABILITY_API_BIND_ADDRESS"] == "127.0.0.1"
     assert values["LIVABILITY_API_PORT"] == "8091"
+    assert values["LIVABILITY_FRONTEND_BIND_ADDRESS"] == "127.0.0.1"
+    assert values["LIVABILITY_FRONTEND_PORT"] == "5173"
+    assert values["LIVABILITY_INTERNAL_NETWORK_NAME"] == "livability-agent-internal"
     assert values["OPENWEBUI_ADMIN_ENV_FILE"] == ""
 
 
@@ -50,11 +53,28 @@ def test_openwebui_override_uses_canonical_project_environment() -> None:
 def test_example_covers_all_compose_variables() -> None:
     compose = "\n".join(
         (PROJECT_ROOT / name).read_text(encoding="utf-8")
-        for name in ("compose.yaml", "compose.openwebui.override.yaml")
+        for name in (
+            "compose.yaml",
+            "compose.public.yaml",
+            "compose.openwebui.override.yaml",
+        )
     )
     compose_keys = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", compose))
+    # PUBLIC_URL is injected by the public-gateway manifest, not by the
+    # Livability backend environment file.
+    compose_keys.discard("PUBLIC_URL")
 
-    assert compose_keys <= set(_env_values(PROJECT_ROOT / ".env.backend.example"))
+    gateway_only = {"PUBLIC_URL"}
+    assert compose_keys - gateway_only <= set(_env_values(PROJECT_ROOT / ".env.backend.example"))
+
+
+def test_public_compose_exposes_the_dedicated_frontend_only() -> None:
+    public = (PROJECT_ROOT / "compose.public.yaml").read_text(encoding="utf-8")
+
+    assert "  livability-agent-frontend:" in public
+    assert "ports: !reset []" in public
+    assert "PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL}" in public
+    assert "openwebui-agent-network" not in public
 
 
 def test_docker_build_uses_locked_dependencies() -> None:

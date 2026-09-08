@@ -12,21 +12,24 @@
 
 ## UIとAgent APIの分離
 
-DevUIは従来どおりプロセス内の `LivabilityCoordinatorAgent` を直接表示します。OpenWebUI連携では同じ `LivabilityOrchestrator` をFastAPIで包み、Pipe FunctionはHTTP境界だけを利用します。
+専用フロントは同じ `LivabilityOrchestrator` を包むFastAPIへ、同一originの`/api/`プロキシ経由で接続します。APIキーはNginxのserver-side proxyで付与し、ブラウザへ渡しません。DevUIは従来どおりプロセス内の `LivabilityCoordinatorAgent` を直接表示します。
+OpenWebUI Pipeは旧構成との互換用に残していますが、本番公開の入口ではありません。
 
 ```text
-Agent Framework DevUI ─→ LivabilityCoordinatorAgent ─┐
-                                                     ├─→ LivabilityOrchestrator
-共有OpenWebUI ─→ Pipe ─→ Livability Agent HTTP API ──┘
-                                                         ├─ WorkflowBuilder
-                                                         └─ Markdown / JSON
+専用フロント ─→ Nginx /api proxy ─→ Livability Agent HTTP API ─┐
+Agent Framework DevUI ─→ LivabilityCoordinatorAgent ──────────┤
+旧共有OpenWebUI ─→ 互換Pipe ───────────────────────────────────┘
+                                                               ├─→ LivabilityOrchestrator
+                                                               ├─ WorkflowBuilder
+                                                               └─ Markdown / JSON
 ```
 
 配置上の不変条件:
 
-- OpenWebUIは共有UI・認証・Function DBだけを所有する。
-- 各Agentアプリは個別の認証付きHTTP APIと成果物ストレージを所有する。
-- 共通Dockerネットワーク上のサービスURLはPipeのValveへ保存し、UIイメージへ埋め込まない。
+- 専用フロントは候補地比較、評価軸、根拠、進捗を所有する。
+- Livability APIは個別の認証付きHTTP APIと成果物ストレージを所有する。
+- 本番ComposeではフロントとAPIだけがLivability内部networkを共有し、公開networkにはフロントだけを接続する。
+- OpenWebUIとの接続は互換用のPipeだけに限定し、Livabilityは共有OpenWebUI networkへ依存しない。
 - APIを外部公開する場合はBearer認証を必須とする。
 - Pipe登録に使うOpenWebUI管理者キーはイメージやComposeへ埋め込まない。
 - DevUIとOpenWebUIは同一のオーケストレーション・採点ロジックを使う。

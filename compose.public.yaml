@@ -1,0 +1,9 @@
+services:
+  livability-agent-api:
+    # The browser reaches the API through the frontend reverse proxy.
+    ports: !reset []
+
+  livability-agent-frontend:
+    ports: !reset []
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL}

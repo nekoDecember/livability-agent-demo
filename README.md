@@ -14,9 +14,9 @@ docker compose --env-file .env.backend up --build -d --wait
 
 APIは8091番で待ち受けます。
 
-## 開発用の比較UI
+## 専用の比較フロント
 
-OpenWebUIの会話画面ではなく、候補地・評価軸・根拠・実行記録を横並びで確認する専用UIがあります。
+OpenWebUIの会話画面とは別に、候補地・評価軸・根拠・実行記録を横並びで確認する専用フロントがあります。
 
 ```sh
 cd frontend
@@ -28,9 +28,20 @@ npm run dev
 
 APIを起動した状態では、UIは`/v1/agent/assessments/stream`のSSEから実際の進捗を受け取ります。
 
-## OpenWebUIとの接続
+APIとフロントをComposeでまとめて起動する場合は、プロジェクトルートで実行します。
 
-共有OpenWebUIを使う場合は、先にOpenWebUI基盤を起動します。
+```sh
+docker compose --env-file .env.backend up --build -d --wait
+```
+
+本番では、専用フロントをCloudflareへ公開します。フロントの`/api/`プロキシから
+内部APIへ接続するため、Livability API自体は公開networkへ接続しません。
+
+## OpenWebUI互換接続
+
+旧構成との互換性のため、OpenWebUI Pipeも残しています。
+通常の本番公開経路は専用フロントであり、Livabilityを共有OpenWebUIへ接続しません。
+互換構成を使う場合は、先にOpenWebUI基盤を起動します。
 このAgentは外部ネットワーク`openwebui-agent-network`に接続します。
 APIの名前は`livability-agent-api`です。
 

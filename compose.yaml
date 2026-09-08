@@ -10,7 +10,6 @@ services:
     environment:
       API_HOST: 0.0.0.0
       API_PORT: 8091
-      LIVABILITY_API_KEY: "${LIVABILITY_API_KEY:?Set LIVABILITY_API_KEY in .env.backend and pass --env-file .env.backend}"
       OUTPUTS_DIR: /data/outputs
     ports:
       - "${LIVABILITY_API_BIND_ADDRESS:-127.0.0.1}:${LIVABILITY_API_PORT:-8091}:8091"
@@ -34,5 +33,42 @@ services:
       timeout: 5s
       retries: 5
 
+    networks:
+      - livability-internal
+
+  livability-agent-frontend:
+    build:
+      context: ./frontend
+    env_file:
+      - path: .env.backend
+        required: false
+    ports:
+      - "${LIVABILITY_FRONTEND_BIND_ADDRESS:-127.0.0.1}:${LIVABILITY_FRONTEND_PORT:-5173}:8080"
+    depends_on:
+      livability-agent-api:
+        condition: service_healthy
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --output-document=/dev/null
+        - http://127.0.0.1:8080/
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - livability-internal
+
 volumes:
   livability-outputs:
+
+networks:
+  livability-internal:
+    name: ${LIVABILITY_INTERNAL_NETWORK_NAME:-livability-agent-internal}
