@@ -4,13 +4,19 @@ from .models import AXIS_LABELS, AssessmentPlan, AxisEvidence, AxisNarrative, Ax
 
 
 def score_axis(evidence: AxisEvidence, narrative: AxisNarrative) -> AxisResult:
-    available = [metric for metric in evidence.metrics if metric.quality > 0]
+    if narrative.axis != evidence.axis:
+        raise ValueError("Narrative axis does not match evidence")
+    scorable = [metric for metric in evidence.metrics if metric.direction != "context_only"]
+    available = [metric for metric in scorable if metric.quality > 0]
     total_weight = sum(metric.weight for metric in available)
     if total_weight <= 0:
         raise ValueError(f"No scorable metrics for axis={evidence.axis.value}")
 
     score = sum(metric.normalized_score * metric.weight for metric in available) / total_weight
-    confidence = sum(metric.quality * metric.weight for metric in available) / total_weight
+    # Missing/zero-quality evidence lowers confidence instead of disappearing.
+    confidence = sum(metric.quality * metric.weight for metric in scorable) / sum(
+        metric.weight for metric in scorable
+    )
     if evidence.data_mode == "mock":
         confidence = min(confidence, 0.50)
 
@@ -28,6 +34,8 @@ def score_axis(evidence: AxisEvidence, narrative: AxisNarrative) -> AxisResult:
 
 def score_overall(plan: AssessmentPlan, axis_results: list[AxisResult]) -> tuple[float, float]:
     by_axis = {result.axis: result for result in axis_results}
+    if len(by_axis) != len(axis_results) or set(by_axis) != set(plan.enabled_axes):
+        raise ValueError("Overall scoring requires exactly one result for every enabled axis")
     usable = [(axis, weight) for axis, weight in plan.weights.items() if axis in by_axis]
     total_weight = sum(weight for _, weight in usable)
     if total_weight <= 0:

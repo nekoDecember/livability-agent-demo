@@ -54,7 +54,10 @@ class LivabilityOrchestrator:
         steps: list[ExecutionStep] = []
 
         plan_started = perf_counter()
-        region = await self.provider.resolve_region(user_request)
+        region = await asyncio.wait_for(
+            self.provider.resolve_region(user_request),
+            timeout=self.settings.data_timeout_seconds,
+        )
         plan = build_plan(
             user_request,
             region,
@@ -191,18 +194,38 @@ class LivabilityOrchestrator:
         notify: ProgressCallback,
     ) -> dict[Axis, AxisEvidence]:
         async def fetch(axis: Axis) -> tuple[Axis, AxisEvidence]:
-            evidence = await self.provider.fetch_axis(region, axis)
+            evidence = await asyncio.wait_for(
+                self.provider.fetch_axis(region, axis),
+                timeout=self.settings.data_timeout_seconds,
+            )
+            if (
+                evidence.axis != axis
+                or evidence.region.municipality_code != region.municipality_code
+            ):
+                raise ValueError(f"Evidence identity mismatch for axis={axis.value}")
+            if evidence.data_mode != self.settings.data_mode:
+                raise ValueError(f"Evidence data mode mismatch for axis={axis.value}")
+            if evidence.data_mode == "government_api" and any(m.is_mock for m in evidence.metrics):
+                raise ValueError("Live assessment cannot contain mock metrics")
+            if not any(m.quality > 0 and m.direction != "context_only" for m in evidence.metrics):
+                raise ValueError(f"No scorable evidence for axis={axis.value}")
             return axis, evidence
 
         tasks = [asyncio.create_task(fetch(axis)) for axis in axes]
         results: dict[Axis, AxisEvidence] = {}
-        for completed in asyncio.as_completed(tasks):
-            axis, evidence = await completed
-            results[axis] = evidence
-            await notify(
-                f"{AXIS_LABELS[axis]}データ取得完了: "
-                f"{len(evidence.api_calls)} API（{evidence.elapsed_ms} ms）"
-            )
+        try:
+            for completed in asyncio.as_completed(tasks):
+                axis, evidence = await completed
+                results[axis] = evidence
+                await notify(
+                    f"{AXIS_LABELS[axis]}データ取得完了: "
+                    f"{len(evidence.api_calls)} API（{evidence.elapsed_ms} ms）"
+                )
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         return results
 
     def _disclaimers(self, excluded_axes: Sequence[Axis]) -> list[str]:
