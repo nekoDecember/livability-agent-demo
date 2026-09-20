@@ -200,6 +200,7 @@ def create_app(
         report, markdown = await request.app.state.orchestrator.assess(
             body.request,
             enabled_axes=body.enabled_axes,
+            mode=body.mode,
         )
         return AssessmentResponse(report=report, markdown=markdown)
 
@@ -215,6 +216,7 @@ def create_app(
                 body.request,
                 progress=progress,
                 enabled_axes=body.enabled_axes,
+                mode=body.mode,
             )
         )
 
@@ -264,6 +266,7 @@ def create_app(
         _, markdown = await request.app.state.orchestrator.assess(
             prompt,
             enabled_axes=body.enabled_axes,
+            mode=body.mode,
         )
         completion_id = f"chatcmpl-{uuid4()}"
         if body.stream:

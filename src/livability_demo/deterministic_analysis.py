@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Sequence
+
 from .models import (
     AXIS_LABELS,
     Axis,
@@ -7,7 +10,123 @@ from .models import (
     AxisNarrative,
     AxisResult,
     FinalNarrative,
+    KnowledgeOnlyAssessment,
+    KnowledgeOnlyAxisAssessment,
 )
+
+KNOWLEDGE_ONLY_SCORE_SETS: dict[str, dict[Axis, float]] = {
+    "流山市": {
+        Axis.CONVENIENCE: 72,
+        Axis.HOUSING: 62,
+        Axis.FAMILY: 82,
+        Axis.SAFETY: 58,
+        Axis.FUTURE: 80,
+    },
+    "柏市": {
+        Axis.CONVENIENCE: 84,
+        Axis.HOUSING: 66,
+        Axis.FAMILY: 76,
+        Axis.SAFETY: 59,
+        Axis.FUTURE: 69,
+    },
+    "武蔵野市": {
+        Axis.CONVENIENCE: 92,
+        Axis.HOUSING: 35,
+        Axis.FAMILY: 82,
+        Axis.SAFETY: 68,
+        Axis.FUTURE: 75,
+    },
+    "横浜市": {
+        Axis.CONVENIENCE: 83,
+        Axis.HOUSING: 55,
+        Axis.FAMILY: 78,
+        Axis.SAFETY: 57,
+        Axis.FUTURE: 76,
+    },
+    "さいたま市": {
+        Axis.CONVENIENCE: 80,
+        Axis.HOUSING: 68,
+        Axis.FAMILY: 75,
+        Axis.SAFETY: 61,
+        Axis.FUTURE: 78,
+    },
+    "千代田区": {
+        Axis.CONVENIENCE: 98,
+        Axis.HOUSING: 18,
+        Axis.FAMILY: 72,
+        Axis.SAFETY: 64,
+        Axis.FUTURE: 84,
+    },
+}
+
+
+def _knowledge_only_score(region_name: str, axis: Axis) -> float:
+    known = KNOWLEDGE_ONLY_SCORE_SETS.get(region_name)
+    if known and axis in known:
+        return known[axis]
+    digest = hashlib.sha256(f"{region_name}|{axis.value}".encode()).hexdigest()
+    return float(42 + int(digest[:4], 16) % 38)
+
+
+def build_knowledge_only_assessment(
+    region_name: str,
+    user_request: str,
+    enabled_axes: Sequence[Axis],
+) -> KnowledgeOnlyAssessment:
+    """Build a transparent offline substitute for the knowledge-only LLM path."""
+
+    del user_request
+    assessments: list[KnowledgeOnlyAxisAssessment] = []
+    for axis in enabled_axes:
+        score = _knowledge_only_score(region_name, axis)
+        label = AXIS_LABELS[axis]
+        assessments.append(
+            KnowledgeOnlyAxisAssessment(
+                axis=axis,
+                score=score,
+                confidence=0.20,
+                narrative=AxisNarrative(
+                    axis=axis,
+                    summary=(
+                        f"{label}は、外部データを参照しない一般知識ベースの"
+                        f"仮説として{score:.0f}点相当です。"
+                    ),
+                    strengths=[f"{label}について一般的な地域イメージでは判断材料があります"],
+                    cautions=[
+                        "最新の数値・駅や町丁目ごとの差・個別物件条件は確認できません",
+                        "この点数は測定値ではなく、LLM知識のみの粗い見立てです",
+                    ],
+                ),
+            )
+        )
+
+    high = sorted(assessments, key=lambda item: item.score, reverse=True)
+    low = list(reversed(high))
+    strengths = [
+        f"{AXIS_LABELS[item.axis]}が{item.score:.0f}点で、一般知識ベースの強みです。"
+        for item in high[:2]
+    ]
+    cautions = [
+        f"{AXIS_LABELS[item.axis]}は{item.score:.0f}点で、現地条件の確認が必要です。"
+        for item in low[:2]
+    ]
+    cautions.append("外部データAPIを使っていないため、最新性と数値の正確性は保証しません。")
+    return KnowledgeOnlyAssessment(
+        region_name=region_name,
+        axis_assessments=assessments,
+        narrative=FinalNarrative(
+            executive_summary=(
+                f"{region_name}を、外部データAPIなし・LLMの一般知識だけで見た"
+                "予備評価です。比較の方向性を決めるための仮説として扱ってください。"
+            ),
+            strengths=strengths[:3],
+            cautions=cautions[:3],
+            suggested_followups=[
+                "候補を並べて第一候補を決め、重要な弱点だけ現地確認する",
+                "同じ候補を外部データありモードでも再評価する",
+            ],
+        ),
+    )
 
 
 def build_axis_narrative(evidence: AxisEvidence) -> AxisNarrative:

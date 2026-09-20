@@ -18,7 +18,11 @@ from pydantic import BaseModel
 
 from .catalog import AXIS_AGENT_NAMES
 from .config import Settings
-from .deterministic_analysis import build_axis_narrative, build_final_narrative
+from .deterministic_analysis import (
+    build_axis_narrative,
+    build_final_narrative,
+    build_knowledge_only_assessment,
+)
 from .models import (
     AXIS_LABELS,
     Axis,
@@ -26,6 +30,7 @@ from .models import (
     AxisNarrative,
     AxisResult,
     FinalNarrative,
+    KnowledgeOnlyAssessment,
 )
 from .offline_client import PAYLOAD_MARKER, OfflineChatClient
 
@@ -52,6 +57,21 @@ FINAL_EVALUATOR
 - 実行された専門エージェント数を5と決めつけない。除外軸を評価済みのように扱わない。
 - モックデータを実データのように表現しない。
 - 指定された FinalNarrative スキーマだけを返す。
+""".strip()
+
+
+KNOWLEDGE_ONLY_INSTRUCTIONS = """
+あなたは、外部の地域データAPI・検索・ツールを一切使わずに回答する、
+日本の住みやすさ比較アドバイザーです。
+KNOWLEDGE_ONLY
+
+規則:
+- あなたの学習済みの一般知識だけを使い、最新の統計値・施設数・価格・災害範囲を断定しない。
+- 入力された候補地域に対して、指定された評価軸ごとに「その条件への適合度」の粗い0〜100点を付ける。
+- 点数は測定値ではなく比較のための仮説。自信が低いときはconfidenceを低くする。
+- 町丁目・駅・物件・時点による差は必ず注意点に含める。
+- 結論は曖昧に逃げず、与えられた条件で何を第一候補にすべきか分かる日本語で書く。
+- 指定されたKnowledgeOnlyAssessmentスキーマだけを返す。
 """.strip()
 
 
@@ -195,6 +215,13 @@ class AgentTeam:
             instructions=FINAL_EVALUATOR_INSTRUCTIONS,
             default_options={"response_format": FinalNarrative},
         )
+        self.knowledge_evaluator = Agent(
+            name="KnowledgeOnlyEvaluationAgent",
+            description="外部データを使わずLLMの一般知識だけで予備評価するエージェント",
+            client=self._client,
+            instructions=KNOWLEDGE_ONLY_INSTRUCTIONS,
+            default_options={"response_format": KnowledgeOnlyAssessment},
+        )
 
     def build_specialist_workflow(self, enabled_axes: Sequence[Axis]) -> Workflow:
         """Create an inspectable graph containing only the selected specialist Agents."""
@@ -303,6 +330,59 @@ class AgentTeam:
                 build_final_narrative(region_name, overall_score, axis_results),
                 True,
                 f"決定論的フォールバックを使用: {type(exc).__name__}: {exc}",
+            )
+
+    async def create_knowledge_only_assessment(
+        self,
+        *,
+        user_request: str,
+        region_name: str,
+        enabled_axes: Sequence[Axis],
+    ) -> tuple[KnowledgeOnlyAssessment, bool, str]:
+        """Ask the configured LLM for a no-external-data, explicitly approximate view."""
+
+        selected = [Axis(axis) for axis in enabled_axes]
+        payload = {
+            "user_request": user_request,
+            "region_name": region_name,
+            "enabled_axes": [axis.value for axis in selected],
+        }
+        prompt = (
+            "外部データAPIを呼ばず、LLM知識だけでこの予備評価を作成してください。\n"
+            f"{PAYLOAD_MARKER}\n{json.dumps(payload, ensure_ascii=False)}"
+        )
+
+        try:
+            response = await asyncio.wait_for(
+                self.knowledge_evaluator.run(
+                    prompt,
+                    session=self.knowledge_evaluator.create_session(),
+                    options={"response_format": KnowledgeOnlyAssessment},
+                ),
+                timeout=self._settings.agent_timeout_seconds,
+            )
+            value = response.value
+            assessment = (
+                value
+                if isinstance(value, KnowledgeOnlyAssessment)
+                else KnowledgeOnlyAssessment.model_validate_json(response.text)
+            )
+            if assessment.region_name != region_name:
+                raise ValueError("Knowledge-only response region does not match the request")
+            by_axis = {item.axis: item for item in assessment.axis_assessments}
+            if len(by_axis) != len(selected) or set(by_axis) != set(selected):
+                raise ValueError("Knowledge-only response axes do not match the request")
+            if any(item.narrative.axis != item.axis for item in by_axis.values()):
+                raise ValueError("Knowledge-only narrative axis does not match the request")
+            assessment = assessment.model_copy(
+                update={"axis_assessments": [by_axis[axis] for axis in selected]}
+            )
+            return assessment, False, "LLM知識のみ（外部データAPIは未使用）"
+        except Exception as exc:
+            return (
+                build_knowledge_only_assessment(region_name, user_request, selected),
+                True,
+                "オフライン代替を使用: " + f"{type(exc).__name__}: {exc}",
             )
 
     async def close(self) -> None:

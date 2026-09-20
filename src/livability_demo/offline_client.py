@@ -16,8 +16,19 @@ from agent_framework import (
     ResponseStream,
 )
 
-from .deterministic_analysis import build_axis_narrative, build_final_narrative
-from .models import AxisEvidence, AxisNarrative, AxisResult, FinalNarrative
+from .deterministic_analysis import (
+    build_axis_narrative,
+    build_final_narrative,
+    build_knowledge_only_assessment,
+)
+from .models import (
+    Axis,
+    AxisEvidence,
+    AxisNarrative,
+    AxisResult,
+    FinalNarrative,
+    KnowledgeOnlyAssessment,
+)
 
 PAYLOAD_MARKER = "PAYLOAD_JSON:"
 
@@ -51,11 +62,19 @@ class OfflineChatClient(FunctionInvocationLayer, BaseChatClient):
         self,
         messages: Sequence[Message],
         options: Mapping[str, Any],
-    ) -> AxisNarrative | FinalNarrative | str:
+    ) -> AxisNarrative | FinalNarrative | KnowledgeOnlyAssessment | str:
         # Agent Framework 1.13 carries Agent.instructions in chat options rather than
         # materializing a system Message for every provider.
         system = f"{_system_text(messages)}\n{options.get('instructions', '')}"
         payload = _extract_payload(messages)
+
+        if "KNOWLEDGE_ONLY" in system:
+            enabled_axes = [Axis(axis) for axis in payload.get("enabled_axes", [])]
+            return build_knowledge_only_assessment(
+                str(payload.get("region_name", "サンプル市")),
+                str(payload.get("user_request", "")),
+                enabled_axes,
+            )
 
         axis_match = re.search(r"SPECIALIST_AXIS=([a-z_]+)", system)
         if axis_match:
@@ -82,7 +101,7 @@ class OfflineChatClient(FunctionInvocationLayer, BaseChatClient):
     ) -> ChatResponse[Any]:
         validated = await self._validate_options(options)
         value = self._build_value(messages, validated)
-        if isinstance(value, (AxisNarrative, FinalNarrative)):
+        if isinstance(value, (AxisNarrative, FinalNarrative, KnowledgeOnlyAssessment)):
             text = value.model_dump_json()
         else:
             text = value

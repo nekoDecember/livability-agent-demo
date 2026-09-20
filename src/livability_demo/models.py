@@ -15,6 +15,9 @@ class Axis(StrEnum):
     FUTURE = "future"
 
 
+DataMode = Literal["mock", "government_api", "knowledge_only"]
+
+
 AXIS_LABELS: dict[Axis, str] = {
     Axis.CONVENIENCE: "移動・買い物",
     Axis.HOUSING: "住まいコスト",
@@ -71,7 +74,7 @@ class AxisEvidence(BaseModel):
     metrics: list[MetricEvidence]
     api_calls: list[ApiCallTrace]
     elapsed_ms: int
-    data_mode: Literal["mock", "government_api"]
+    data_mode: DataMode
 
 
 class AxisNarrative(BaseModel):
@@ -90,7 +93,7 @@ class AssessmentPlan(BaseModel):
     agent_selection_reason: str
     preferences: list[str]
     weight_reason: str
-    data_mode: Literal["mock", "government_api"]
+    data_mode: DataMode
 
     @model_validator(mode="after")
     def validate_agent_selection(self) -> Self:
@@ -125,6 +128,23 @@ class FinalNarrative(BaseModel):
     strengths: list[str] = Field(min_length=1, max_length=3)
     cautions: list[str] = Field(min_length=1, max_length=3)
     suggested_followups: list[str] = Field(min_length=1, max_length=3)
+
+
+class KnowledgeOnlyAxisAssessment(BaseModel):
+    """A deliberately approximate axis view produced without external data."""
+
+    axis: Axis
+    score: float = Field(ge=0, le=100)
+    confidence: float = Field(ge=0, le=1)
+    narrative: AxisNarrative
+
+
+class KnowledgeOnlyAssessment(BaseModel):
+    """Structured output for the no-external-data assessment path."""
+
+    region_name: str
+    axis_assessments: list[KnowledgeOnlyAxisAssessment] = Field(min_length=1, max_length=5)
+    narrative: FinalNarrative
 
 
 class ExecutionStep(BaseModel):

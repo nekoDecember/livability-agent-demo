@@ -12,6 +12,9 @@ class AssessmentRequest(BaseModel):
 
     request: str = Field(min_length=1, max_length=10_000)
     enabled_axes: list[Axis] | None = None
+    # "data" follows the server's configured data provider. "knowledge_only" skips
+    # regional data providers and asks the LLM for a deliberately approximate view.
+    mode: Literal["data", "knowledge_only"] = "data"
 
 
 class AssessmentResponse(BaseModel):
@@ -48,3 +51,4 @@ class ChatCompletionRequest(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = None
     max_completion_tokens: int | None = None
+    mode: Literal["data", "knowledge_only"] = "data"

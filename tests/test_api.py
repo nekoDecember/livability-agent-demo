@@ -110,3 +110,24 @@ async def test_assessment_stream_emits_progress_and_result(tmp_path: Path) -> No
     assert "event: result" in body
     assert '"report_id"' in body
     assert "event: done" in body
+
+
+@pytest.mark.asyncio
+async def test_assessment_api_supports_knowledge_only_mode(tmp_path: Path) -> None:
+    app = create_app(_settings(tmp_path))
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/v1/agent/assessments",
+                json={
+                    "request": "柏市を、車なし・子育てで評価して",
+                    "mode": "knowledge_only",
+                },
+            )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["report"]["plan"]["data_mode"] == "knowledge_only"
+    assert "not-called" in payload["report"]["axis_results"][0]["api_calls"][0]["endpoint"]
+    assert "LLM知識のみ" in payload["markdown"]

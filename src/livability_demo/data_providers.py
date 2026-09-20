@@ -69,6 +69,36 @@ def _extract_region_name(user_request: str) -> str:
     return "サンプル市"
 
 
+def resolve_region_without_external_data(user_request: str) -> RegionInfo:
+    """Resolve a display region using only the local PoC municipality hints.
+
+    The knowledge-only path must not touch a configured live provider because a future
+    provider may perform network I/O even during region resolution.
+    """
+
+    name = _extract_region_name(user_request)
+    known = KNOWN_REGIONS.get(name)
+    if known:
+        code, prefecture, comparison_group = known
+        return RegionInfo(
+            query=name,
+            name=name,
+            municipality_code=code,
+            prefecture=prefecture,
+            comparison_group=comparison_group,
+            is_mock_resolution=False,
+        )
+
+    code = f"M{_stable_number(name, modulo=100_000):05d}"
+    return RegionInfo(
+        query=name,
+        name=name,
+        municipality_code=code,
+        comparison_group="同程度の人口規模の市区町村（デモ設定）",
+        is_mock_resolution=True,
+    )
+
+
 class MockRegionalDataProvider(RegionalDataProvider):
     """Deterministic key-free provider used by the report demo."""
 
@@ -76,27 +106,7 @@ class MockRegionalDataProvider(RegionalDataProvider):
         self._latency_ms = max(0, latency_ms)
 
     async def resolve_region(self, user_request: str) -> RegionInfo:
-        name = _extract_region_name(user_request)
-        known = KNOWN_REGIONS.get(name)
-        if known:
-            code, prefecture, comparison_group = known
-            return RegionInfo(
-                query=name,
-                name=name,
-                municipality_code=code,
-                prefecture=prefecture,
-                comparison_group=comparison_group,
-                is_mock_resolution=False,
-            )
-
-        code = f"M{_stable_number(name, modulo=100_000):05d}"
-        return RegionInfo(
-            query=name,
-            name=name,
-            municipality_code=code,
-            comparison_group="同程度の人口規模の市区町村（デモ設定）",
-            is_mock_resolution=True,
-        )
+        return resolve_region_without_external_data(user_request)
 
     async def fetch_axis(self, region: RegionInfo, axis: Axis) -> AxisEvidence:
         started = perf_counter()
@@ -212,4 +222,3 @@ def build_data_provider(settings: Settings) -> RegionalDataProvider:
     if settings.data_mode == "government_api":
         return GovernmentApiRegionalDataProvider(settings)
     return MockRegionalDataProvider(latency_ms=settings.mock_latency_ms)
-

@@ -18,6 +18,12 @@ def render_markdown(report: AssessmentReport) -> str:
             "> [!WARNING]\n"
             "> **デモ用モックデータです。実在地域の意思決定には使用できません。**\n\n"
         )
+    elif report.plan.data_mode == "knowledge_only":
+        mock_banner = (
+            "> [!NOTE]\n"
+            "> **外部データAPIを使わず、LLMの一般知識だけで作った予備評価です。"
+            "点数は測定値ではありません。**\n\n"
+        )
 
     axis_rows = "\n".join(
         f"| {AXIS_LABELS[result.axis]} | {result.score:.1f} | "
@@ -71,7 +77,12 @@ def render_markdown(report: AssessmentReport) -> str:
         for metric in result.metrics
     }
     sources = "\n".join(
-        f"- [{source.source_name} / {source.endpoint}]({source.url}) — {source.reference_date}"
+        (
+            f"- [{source.source_name} / {source.endpoint}]({source.url})"
+            if source.url
+            else f"- {source.source_name} / {source.endpoint}"
+        )
+        + f" — {source.reference_date}"
         for source in source_map.values()
     )
     execution_rows = "\n".join(

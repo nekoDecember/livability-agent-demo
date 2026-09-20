@@ -9,6 +9,7 @@ export const AXIS_ORDER: AxisKey[] = [
 ];
 
 export type ExecutionStatus = "completed" | "fallback" | "failed" | "skipped";
+export type AssessmentMode = "data" | "knowledge_only";
 
 export interface SourceReference {
   source_id: string;
@@ -78,7 +79,7 @@ export interface AssessmentPlan {
   agent_selection_reason: string;
   preferences: string[];
   weight_reason: string;
-  data_mode: "mock" | "government_api";
+  data_mode: "mock" | "government_api" | "knowledge_only";
 }
 
 export interface ExecutionStep {
@@ -116,14 +117,16 @@ export interface AssessmentResponse {
 }
 
 export interface CandidateReport {
+  markdown?: string;
   report: AssessmentReport;
-  source: "demo" | "api";
+  source: "demo" | "api" | "knowledge";
   progress: string[];
 }
 
 export interface AssessmentRequest {
   request: string;
   enabled_axes?: AxisKey[];
+  mode?: AssessmentMode;
 }
 
 export interface RunProgress {

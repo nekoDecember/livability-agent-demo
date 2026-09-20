@@ -41,6 +41,43 @@ async def test_mock_assessment_writes_markdown_and_json(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_knowledge_only_assessment_skips_regional_data_apis(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        llm_mode="mock",
+        data_mode="government_api",
+        # The knowledge-only request must not need live provider credentials.
+        estat_app_id="unused-in-this-path",
+        reinfolib_api_key="unused-in-this-path",
+        outputs_dir=tmp_path,
+        mock_latency_ms=0,
+        devui_auto_open=False,
+    )
+    orchestrator = LivabilityOrchestrator(settings)
+    try:
+        report, markdown = await orchestrator.assess(
+            "流山市を子育て重視、車なしで評価して",
+            mode="knowledge_only",
+        )
+    finally:
+        await orchestrator.close()
+
+    assert report.plan.data_mode == "knowledge_only"
+    assert len(report.axis_results) == len(Axis)
+    assert all(
+        call.status == "skipped"
+        for result in report.axis_results
+        for call in result.api_calls
+    )
+    assert any(
+        step.status == "skipped" and step.name == "地域データAPI群"
+        for step in report.execution_steps
+    )
+    assert "外部データAPIを使わず" in markdown
+    assert "LLM知識のみ" in markdown
+
+
+@pytest.mark.asyncio
 async def test_excluded_agent_is_removed_from_workflow_data_and_report(
     tmp_path: Path,
 ) -> None:
