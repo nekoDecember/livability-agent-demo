@@ -1,11 +1,19 @@
-import type { AxisKey, CandidateComparison, CandidateReport, KnowledgeBaseline } from "../types";
+import type { AxisKey, CandidateComparison, CandidateReport, ComparisonMethods, KnowledgeBaseline, ResearchSource } from "../types";
 import { AXIS_ORDER, axisResultFor, formatScore } from "./report";
 import { customerEvidence } from "./customerEvidence";
+import { controlledFields, methodLabel, methodSources, methodStatusLabel, researchSources, searchRoundCount } from "./methodComparison";
 
 export function isMeasuredCandidate(candidate: CandidateReport): boolean {
   return candidate.source === "api"
     && ["open_data", "government_api"].includes(candidate.report.plan.data_mode)
+    && (candidate.report.research_context?.method !== "data_context" || candidate.report.research_context.status === "verified")
     && !candidate.report.axis_results.some(result => result.metrics.some(metric => metric.is_mock));
+}
+
+export function isDemoCandidate(candidate: CandidateReport): boolean {
+  return candidate.source === "demo"
+    || candidate.report.plan.data_mode === "mock"
+    || candidate.report.axis_results.some(result => result.metrics.some(metric => metric.is_mock));
 }
 
 export function proposalHeading(candidates: CandidateReport[], commander?: CandidateComparison): string {
@@ -86,6 +94,7 @@ export interface ProposalInput {
   candidates: CandidateReport[];
   commander?: CandidateComparison;
   baseline?: KnowledgeBaseline;
+  comparisonMethods?: ComparisonMethods;
 }
 
 export function baselineIsOffline(baseline: KnowledgeBaseline): boolean {
@@ -110,9 +119,56 @@ export function candidatePosition(input: ProposalInput, candidate: CandidateRepo
   };
 }
 
-export interface ProposalSlide { title: string; lead: string; items: string[] }
+export interface ProposalSlide { title: string; lead: string; items: string[]; sources?: ResearchSource[] }
 
 export function proposalSlides(input: ProposalInput): ProposalSlide[] {
+  if (input.comparisonMethods) {
+    const methods = (["data_context", "web_search"] as const).map((method) => ({ method, run: input.comparisonMethods?.[method] }));
+    const condition = `${input.preference || "指定なし"} / ${input.candidates.map(candidate => candidate.report.plan.region.name).join("・")}`;
+    const slides: ProposalSlide[] = [{
+      title: "回答の前提をどこまで指定・検証できるか",
+      lead: `同じ条件で2つの方法を実行しました。${condition}`,
+      items: ["データContext：公式・公開データを集め、指定した条件と確認可能な項目を回答へ反映します。", "Web検索：1つのAgentが検索を重ね、見つけた情報を引用付きで回答へまとめます。", "方法間の優劣は自動で決めず、前提・回答・出典を並べて確認します。"],
+    }];
+    for (const { method, run } of methods) {
+      if (!run) {
+        slides.push({ title: `${methodLabel(method)}の回答`, lead: "この方式は未完了です。", items: ["この方式の結果を受信していません。"] });
+        continue;
+      }
+      const sources = methodSources(run);
+      const rounds = searchRoundCount(run);
+      const fields = controlledFields(run);
+      const details = [
+        `状態：${methodStatusLabel(method, run)}`,
+        `指定・検証できた前提：${fields.length ? fields.join("、") : "記録なし"}`,
+        ...(method === "web_search" ? [`検索回数：${rounds.rounds}${rounds.maxRounds ? ` / 最大${rounds.maxRounds}回` : ""}`] : []),
+        ...(run.error ? [`未完了の理由：${run.error}`] : []),
+      ];
+      if (run.comparison) {
+        slides.push({
+          title: `${methodLabel(method)}の回答`,
+          lead: run.comparison.narrative.summary,
+          items: [...details, ...run.comparison.narrative.reasons.map(text => `理由：${text}`), ...run.comparison.narrative.tradeoffs.map(text => `候補間の違い：${text}`), ...run.comparison.narrative.next_checks.map(text => `次に確認：${text}`)],
+          sources,
+        });
+      } else {
+        slides.push({ title: `${methodLabel(method)}の回答`, lead: "この方式は未完了です。", items: details });
+      }
+      for (const candidate of run.candidates) {
+        const report = candidate.report;
+        const context = report.research_context;
+        const candidateSources = researchSources(context);
+        const items = [
+          ...report.narrative.strengths.map(text => `確認した点：${text}`),
+          ...report.narrative.cautions.map(text => `制約・注意点：${text}`),
+          ...(method === "web_search" ? (context?.steps ?? []).map(step => `検索 ${step.round}：${step.query}\n${step.summary}`) : []),
+          ...candidateSources.map((source, index) => `[${index + 1}] ${source.title} — ${source.url}`),
+        ];
+        slides.push({ title: `${methodLabel(method)} / ${report.plan.region.name}`, lead: report.narrative.executive_summary, items, sources: candidateSources });
+      }
+    }
+    return slides;
+  }
   const narrative = input.commander?.narrative;
   const evidence = proposalEvidence(input.candidates, input.weights, input.commander).slice(0, 4);
   const slides = [

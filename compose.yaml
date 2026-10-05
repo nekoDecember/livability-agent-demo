@@ -1,9 +1,30 @@
 name: livability-agent
 
+x-proxy-build-args: &proxy-build-args
+  HTTP_PROXY: ${http_proxy:-${HTTP_PROXY:-}}
+  http_proxy: ${http_proxy:-${HTTP_PROXY:-}}
+  HTTPS_PROXY: ${https_proxy:-${HTTPS_PROXY:-${http_proxy:-${HTTP_PROXY:-}}}}
+  https_proxy: ${https_proxy:-${HTTPS_PROXY:-${http_proxy:-${HTTP_PROXY:-}}}}
+  ALL_PROXY: ${all_proxy:-${ALL_PROXY:-}}
+  all_proxy: ${all_proxy:-${ALL_PROXY:-}}
+  NO_PROXY: "${NO_PROXY:-}${NO_PROXY:+,}${no_proxy:-}${no_proxy:+,}localhost,127.0.0.1,::1,livability-agent-api,openwebui"
+  no_proxy: "${NO_PROXY:-}${NO_PROXY:+,}${no_proxy:-}${no_proxy:+,}localhost,127.0.0.1,::1,livability-agent-api,openwebui"
+
+x-proxy-runtime-environment: &proxy-runtime-environment
+  HTTP_PROXY: ${http_proxy:-${HTTP_PROXY:-}}
+  http_proxy: ${http_proxy:-${HTTP_PROXY:-}}
+  HTTPS_PROXY: ${https_proxy:-${HTTPS_PROXY:-${http_proxy:-${HTTP_PROXY:-}}}}
+  https_proxy: ${https_proxy:-${HTTPS_PROXY:-${http_proxy:-${HTTP_PROXY:-}}}}
+  ALL_PROXY: ${all_proxy:-${ALL_PROXY:-}}
+  all_proxy: ${all_proxy:-${ALL_PROXY:-}}
+  NO_PROXY: "${NO_PROXY:-}${NO_PROXY:+,}${no_proxy:-}${no_proxy:+,}localhost,127.0.0.1,::1,livability-agent-api,openwebui"
+  no_proxy: "${NO_PROXY:-}${NO_PROXY:+,}${no_proxy:-}${no_proxy:+,}localhost,127.0.0.1,::1,livability-agent-api,openwebui"
+
 services:
   livability-open-data-sync:
     build:
       context: .
+      args: *proxy-build-args
     command:
       - livability-open-data-sync
       - --if-enabled
@@ -12,6 +33,7 @@ services:
       - path: .env.backend
         required: false
     environment:
+      <<: *proxy-runtime-environment
       OPEN_DATA_DIR: /data/open-data
     user: "${LIVABILITY_HOST_UID:-501}:${LIVABILITY_HOST_GID:-20}"
     volumes:
@@ -28,10 +50,12 @@ services:
   livability-agent-api:
     build:
       context: .
+      args: *proxy-build-args
     env_file:
       - path: .env.backend
         required: false
     environment:
+      <<: *proxy-runtime-environment
       API_HOST: 0.0.0.0
       API_PORT: 8091
       LIVABILITY_API_KEY: "${LIVABILITY_API_KEY:?Set LIVABILITY_API_KEY in .env.backend and pass --env-file .env.backend}"
@@ -68,10 +92,11 @@ services:
   livability-agent-frontend:
     build:
       context: ./frontend
+      args: *proxy-build-args
     environment:
       LIVABILITY_API_KEY: "${LIVABILITY_API_KEY:?Set LIVABILITY_API_KEY in .env.backend and pass --env-file .env.backend}"
     ports:
-      - "${LIVABILITY_FRONTEND_BIND_ADDRESS:-127.0.0.1}:${LIVABILITY_FRONTEND_PORT:-5173}:8080"
+      - "${LIVABILITY_FRONTEND_BIND_ADDRESS:-0.0.0.0}:${LIVABILITY_FRONTEND_PORT:-5173}:8080"
     depends_on:
       livability-agent-api:
         condition: service_healthy

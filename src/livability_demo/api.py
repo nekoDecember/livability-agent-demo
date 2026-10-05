@@ -21,9 +21,12 @@ from .api_models import (
     CandidateComparisonResponse,
     ChatCompletionMessage,
     ChatCompletionRequest,
+    SearchComparisonRequest,
+    SearchComparisonResponse,
 )
 from .config import Settings
 from .orchestrator import LivabilityOrchestrator
+from .web_search import WebSearchComparison
 
 MODEL_ID = "livability-agent"
 
@@ -143,9 +146,13 @@ def create_app(
         active_settings.ensure_outputs_dir()
         app.state.settings = active_settings
         app.state.orchestrator = orchestrator or LivabilityOrchestrator(active_settings)
-        yield
-        if owns_orchestrator:
-            await app.state.orchestrator.close()
+        app.state.web_comparison = WebSearchComparison(active_settings)
+        try:
+            yield
+        finally:
+            await app.state.web_comparison.close()
+            if owns_orchestrator:
+                await app.state.orchestrator.close()
 
     app = FastAPI(
         title="Livability Multi-Agent API",
@@ -233,6 +240,60 @@ def create_app(
             weights=body.weights or None,
         )
         return CandidateComparisonResponse(comparison=result)
+
+    @app.post(
+        "/v1/agent/search-comparisons",
+        response_model=SearchComparisonResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def search_comparison(
+        request: Request, body: SearchComparisonRequest
+    ) -> SearchComparisonResponse:
+        async def no_progress(_: str) -> None:
+            pass
+
+        return await request.app.state.web_comparison.run(body, no_progress)
+
+    @app.post("/v1/agent/search-comparisons/stream", dependencies=[Depends(require_auth)])
+    async def search_comparison_stream(request: Request, body: SearchComparisonRequest):
+        queue: asyncio.Queue[str] = asyncio.Queue()
+
+        async def progress(message: str) -> None:
+            await queue.put(message)
+
+        task = asyncio.create_task(request.app.state.web_comparison.run(body, progress))
+
+        async def events() -> AsyncIterator[str]:
+            try:
+                while not task.done() or not queue.empty():
+                    try:
+                        message = await asyncio.wait_for(queue.get(), timeout=0.1)
+                    except TimeoutError:
+                        continue
+                    yield _sse_event("progress", {"message": message})
+                result = await task
+                yield _sse_event("result", result.model_dump(mode="json"))
+                yield _sse_event("done", {})
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                yield _sse_event(
+                    "error",
+                    {
+                        "message": "Web検索の比較を完了できませんでした。"
+                        "接続・モデル設定を確認してください。"
+                    },
+                )
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.post("/v1/agent/assessments/stream", dependencies=[Depends(require_auth)])
     async def assessment_stream(request: Request, body: AssessmentRequest):

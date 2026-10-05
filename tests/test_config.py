@@ -24,7 +24,7 @@ def test_backend_environment_is_canonical_and_secret_free() -> None:
     assert values["OPENAI_MODEL"] == "gpt-5.6-luna"
     assert values["LIVABILITY_API_BIND_ADDRESS"] == "127.0.0.1"
     assert values["LIVABILITY_API_PORT"] == "8091"
-    assert values["LIVABILITY_FRONTEND_BIND_ADDRESS"] == "127.0.0.1"
+    assert values["LIVABILITY_FRONTEND_BIND_ADDRESS"] == "0.0.0.0"
     assert values["LIVABILITY_FRONTEND_PORT"] == "5173"
     assert values["LIVABILITY_INTERNAL_NETWORK_NAME"] == "livability-agent-internal"
     assert values["OPENWEBUI_ADMIN_ENV_FILE"] == ""

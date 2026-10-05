@@ -1,10 +1,11 @@
-import type { AxisKey, CandidateComparison, CandidateReport, KnowledgeBaseline } from "../types";
+import type { AxisKey, CandidateComparison, CandidateReport, ComparisonMethods, KnowledgeBaseline } from "../types";
 import { AXIS_ORDER, axisResultFor, axisUnavailableLabel, formatScore, metricAvailabilityLabel, normalizeWeights } from "./report";
 import { renderComparisonHtml } from "./reportHtml";
 import { cityHighlights } from "./highlights";
-import { proposalEvidence, proposalHeading, comparisonChange, baselineIsOffline } from "./proposal";
+import { isDemoCandidate, isMeasuredCandidate, proposalEvidence, proposalHeading, comparisonChange, baselineIsOffline } from "./proposal";
 import { renderPresentationHtml } from "./presentationHtml";
 import { buildEvidenceSummary, comparisonAxisLabel } from "./decision";
+import { markdownMethodSection } from "./methodComparison";
 
 export const ARCHIVE_KEY = "livability:reports:v1";
 export interface SavedComparison {
@@ -15,10 +16,17 @@ export interface SavedComparison {
   candidates: CandidateReport[];
   commander?: CandidateComparison;
   baseline?: KnowledgeBaseline;
+  comparisonMethods?: ComparisonMethods;
   markdown: string;
   html: string;
 }
 const modeLabel = (c: CandidateReport) => {
+  if (c.source === "web" || c.report.plan.data_mode === "web_search" || c.report.research_context?.method === "web_search") {
+    return c.report.research_context?.status === "offline" ? "Web検索未実行" : "Web検索型";
+  }
+  if (c.report.research_context?.method === "data_context") {
+    return c.report.research_context.status === "verified" ? "データ収集型" : "データ未取得";
+  }
   if (c.source === "knowledge" || c.report.plan.data_mode === "knowledge_only") {
     return c.report.execution_steps.some(step => step.status === "fallback")
       ? "オフライン代替（外部データ・LLMなし）"
@@ -28,10 +36,40 @@ const modeLabel = (c: CandidateReport) => {
   if (c.report.plan.data_mode === "open_data") return "公式公開データ";
   return "外部データ";
 };
-const hasMeasuredData = (c: CandidateReport) => ["外部データ", "公式公開データ"].includes(modeLabel(c));
+const hasMeasuredData = isMeasuredCandidate;
 const cell = (value: string) => value.replaceAll("|", "\\|").replaceAll("\n", " ");
 
-export function createComparison(candidates: CandidateReport[], weights: Record<AxisKey, number>, preference: string, commander?: CandidateComparison, baseline?: KnowledgeBaseline): SavedComparison {
+function createArchiveId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === "function") {
+    try {
+      return cryptoApi.randomUUID();
+    } catch {
+      // randomUUID is restricted to secure contexts in some browsers.
+    }
+  }
+
+  const bytes = new Uint8Array(16);
+  let hasSecureRandom = false;
+  try {
+    if (typeof cryptoApi?.getRandomValues === "function") {
+      cryptoApi.getRandomValues(bytes);
+      hasSecureRandom = true;
+    }
+  } catch {
+    // Fall through to a local identifier if the browser blocks Web Crypto.
+  }
+  if (!hasSecureRandom) {
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  }
+
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function createComparison(candidates: CandidateReport[], weights: Record<AxisKey, number>, preference: string, commander?: CandidateComparison, baseline?: KnowledgeBaseline, comparisonMethods?: ComparisonMethods): SavedComparison {
   const decision = buildEvidenceSummary(candidates, weights, preference);
   const sharedAxes = decision.sharedAxes;
   const sharedWeights = normalizeWeights(weights, sharedAxes);
@@ -44,7 +82,7 @@ export function createComparison(candidates: CandidateReport[], weights: Record<
   const conclusion = commander
     ? `${commander.narrative.summary} 理由: ${commander.narrative.reasons.join(" / ")}。トレードオフ: ${commander.narrative.tradeoffs.join(" / ")}。次に確認: ${commander.narrative.next_checks.join(" / ")}`
     : "司令塔の統合提案はまだ作成されていません。調査根拠だけでは候補を一つに決めません。";
-  const limitation = candidates.some((candidate) => modeLabel(candidate).startsWith("デモ"))
+  const limitation = candidates.some(isDemoCandidate)
     ? "デモ値のため、実在地域の意思決定には使用できません。"
     : !commander
       ? "司令塔の統合結果がないため、候補の推薦は表示していません。"
@@ -55,11 +93,11 @@ export function createComparison(candidates: CandidateReport[], weights: Record<
       : commuteUnverified
         ? "勤務地までの実際の経路・所要時間は未測定です。この選択が通勤の優劣を証明するものではありません。"
         : "司令塔は暮らしの条件・専門Agentの所見・比較可能な根拠をまとめています。軸別の数値は提案の補足で、単純合計で候補を選んでいません。";
-  const sections = ["# 都市選びのご提案", `条件: ${preference || "指定なし"}`, "## 結論",
+  const sections = [`# ${comparisonMethods ? "都市選びの2方式比較" : "都市選びのご提案"}`, `条件: ${preference || "指定なし"}`, comparisonMethods ? "## 選択した方式の既存統合回答（補足）" : "## 結論",
     proposalHeading(candidates, commander),
     conclusion,
     limitation,
-    "## データで確認できた違い",
+    comparisonMethods ? "## 軸別指標の補足" : "## データで確認できた違い",
     ...proposalEvidence(candidates, weights, commander).slice(0, 6).map(item => `- ${item.label}: ${item.verdict}。${item.meaning}\n  - 物件選びでは: ${item.nextCheck}\n  - 数字・出典: ${item.metricLabel} / ${item.comparison} / ${item.difference} / ${item.source}`),
     "## 各都市を選ぶ条件",
     ...(commander?.narrative.candidate_positions ?? []).map(item => `- ${candidates.find(c => c.report.plan.region.municipality_code === item.region_code)?.report.plan.region.name ?? item.region_code}: ${item.fit_summary} / 選ぶ条件: ${item.selection_condition}`),
@@ -95,15 +133,30 @@ export function createComparison(candidates: CandidateReport[], weights: Record<
       );
     }
   }
+  const methodSections = comparisonMethods ? ["## 2方式の回答比較", ...markdownMethodSection("data_context", comparisonMethods.data_context), ...markdownMethodSection("web_search", comparisonMethods.web_search)] : [];
+  const markdownSections = comparisonMethods
+    ? [
+      ...sections.slice(0, 2),
+      ...methodSections,
+      "",
+      "<details>",
+      "<summary>都市ごとの補足情報・軸別指標を見る</summary>",
+      "",
+      ...sections.slice(2),
+      "",
+      "</details>",
+    ]
+    : sections;
   const saved = {
-    id: crypto.randomUUID(),
+    id: createArchiveId(),
     savedAt: new Date().toISOString(),
     preference,
     weights: { ...weights },
     candidates,
     commander,
     baseline,
-    markdown: sections.join("\n").replace(/^(#{1,4} .+)$/gm, "\n$1\n") + "\n",
+    comparisonMethods,
+    markdown: markdownSections.join("\n").replace(/^(#{1,4} .+)$/gm, "\n$1\n") + "\n",
   };
   return { ...saved, html: renderComparisonHtml(saved) };
 }
@@ -118,7 +171,7 @@ export function readArchive(storage: Pick<Storage, "getItem">): SavedComparison[
       // Exercise the fields used by the report viewer before restoring a snapshot.
       for (const c of item.candidates) {
         if (!Array.isArray(c.progress) || !c.progress.every((p: unknown) => typeof p === "string")) return false;
-        if (c.source !== "api" && c.source !== "demo" && c.source !== "knowledge") return false;
+        if (c.source !== "api" && c.source !== "demo" && c.source !== "knowledge" && c.source !== "web") return false;
         const r = c.report;
         const legacyConfidence = (r as unknown as Record<string, unknown>).overall_confidence;
         if (typeof r.report_id !== "string" || typeof r.plan.region.name !== "string" || !Array.isArray(r.plan.enabled_axes) || !Number.isFinite(r.research_confidence ?? legacyConfidence)) return false;
@@ -130,6 +183,14 @@ export function readArchive(storage: Pick<Storage, "getItem">): SavedComparison[
         }
       }
       if (item.commander !== undefined && (!item.commander.narrative || !Array.isArray(item.commander.narrative.reasons))) return false;
+      if (item.comparisonMethods !== undefined) {
+        for (const method of [item.comparisonMethods.data_context, item.comparisonMethods.web_search]) {
+          if (method === undefined) continue;
+          if ((method.status !== "completed" && method.status !== "failed") || !Array.isArray(method.candidates) || method.candidates.length > 4) return false;
+          if (method.candidates.some((candidate: CandidateReport) => !candidate?.report?.plan?.region?.municipality_code)) return false;
+          if (method.comparison !== undefined && !method.comparison.narrative) return false;
+        }
+      }
       if (item.baseline !== undefined) {
         const baseline = item.baseline;
         if (!baseline.commander?.narrative || !Array.isArray(baseline.commander.narrative.reasons) || !Array.isArray(baseline.commander.narrative.next_checks) || !Array.isArray(baseline.candidates)) return false;

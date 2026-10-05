@@ -9,7 +9,30 @@ export const AXIS_ORDER: AxisKey[] = [
 ];
 
 export type ExecutionStatus = "completed" | "fallback" | "failed" | "skipped";
-export type AssessmentMode = "data" | "knowledge_only";
+export type AssessmentMode = "data" | "knowledge_only" | "web_search";
+
+export interface ResearchSource {
+  url: string;
+  title: string;
+}
+
+export interface ResearchStep {
+  round: number;
+  query: string;
+  summary: string;
+  sources: ResearchSource[];
+}
+
+export interface ResearchContext {
+  method: "data_context" | "web_search" | "knowledge_only" | "mock";
+  status: "verified" | "searched" | "offline" | "failed";
+  controlled_fields: string[];
+  limitations: string[];
+  search_rounds: number;
+  max_search_rounds: number;
+  sources: ResearchSource[];
+  steps: ResearchStep[];
+}
 
 export interface SourceReference {
   source_id: string;
@@ -82,7 +105,7 @@ export interface AssessmentPlan {
   agent_selection_reason: string;
   preferences: string[];
   weight_reason: string;
-  data_mode: "mock" | "open_data" | "government_api" | "knowledge_only";
+  data_mode: "mock" | "open_data" | "government_api" | "knowledge_only" | "web_search";
 }
 
 export interface ExecutionStep {
@@ -111,6 +134,7 @@ export interface AssessmentReport {
     json_path: string;
   };
   disclaimers: string[];
+  research_context?: ResearchContext;
 }
 
 export interface AssessmentResponse {
@@ -133,6 +157,7 @@ export interface CommanderNarrative {
 export interface KnowledgeBaseline {
   candidates: CandidateReport[];
   commander: CandidateComparison;
+  method?: "knowledge_only" | "data_context" | "web_search";
 }
 
 export interface CandidateComparison {
@@ -145,8 +170,32 @@ export interface CandidateComparison {
 export interface CandidateReport {
   markdown?: string;
   report: AssessmentReport;
-  source: "demo" | "api" | "knowledge";
+  source: "demo" | "api" | "knowledge" | "web";
   progress: string[];
+}
+
+export interface ComparisonMethodRun {
+  status: "completed" | "failed";
+  candidates: CandidateReport[];
+  comparison?: CandidateComparison;
+  error?: string;
+}
+
+export interface ComparisonMethods {
+  data_context?: ComparisonMethodRun;
+  web_search?: ComparisonMethodRun;
+}
+
+export interface SearchComparisonRequest {
+  request: string;
+  regions: Array<{ name: string; prefecture?: string; municipality_code: string }>;
+  enabled_axes?: AxisKey[];
+  weights?: Partial<Record<AxisKey, number>>;
+}
+
+export interface SearchComparisonResponse {
+  candidates: AssessmentResponse[];
+  comparison: CandidateComparison;
 }
 
 export interface AssessmentRequest {

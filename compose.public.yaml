@@ -4,6 +4,5 @@ services:
     ports: !reset []
 
   livability-agent-frontend:
-    ports: !reset []
     environment:
       PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL}

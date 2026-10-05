@@ -17,7 +17,7 @@ class Axis(StrEnum):
     FUTURE = "future"
 
 
-DataMode = Literal["mock", "open_data", "government_api", "knowledge_only"]
+DataMode = Literal["mock", "open_data", "government_api", "knowledge_only", "web_search"]
 
 
 AXIS_LABELS: dict[Axis, str] = {
@@ -238,6 +238,29 @@ class ReportArtifacts(BaseModel):
     json_path: str = ""
 
 
+class ResearchSource(BaseModel):
+    url: str
+    title: str
+
+
+class SearchStep(BaseModel):
+    round: int
+    query: str
+    summary: str
+    sources: list[ResearchSource]
+
+
+class ResearchContext(BaseModel):
+    method: Literal["data_context", "web_search", "knowledge_only", "mock"]
+    status: Literal["verified", "searched", "offline", "failed"]
+    controlled_fields: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    search_rounds: int = 0
+    max_search_rounds: int = 0
+    sources: list[ResearchSource] = Field(default_factory=list)
+    steps: list[SearchStep] = Field(default_factory=list)
+
+
 class AssessmentReport(BaseModel):
     report_id: str
     generated_at: datetime
@@ -249,3 +272,4 @@ class AssessmentReport(BaseModel):
     total_elapsed_ms: int
     artifacts: ReportArtifacts = Field(default_factory=ReportArtifacts)
     disclaimers: list[str]
+    research_context: ResearchContext | None = None

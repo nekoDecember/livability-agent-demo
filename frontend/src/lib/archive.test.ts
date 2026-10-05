@@ -1,9 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createDemoReport } from "../demoReport";
 import { ARCHIVE_KEY, createComparison, readArchive } from "./archive";
 import type { CandidateComparison } from "../types";
 const weights = { convenience: 20, housing: 20, family: 20, safety: 20, future: 20 };
 describe("comparison archive", () => {
+  it("creates an archive id when randomUUID is unavailable in a non-secure context", () => {
+    vi.stubGlobal("crypto", {
+      getRandomValues: (bytes: Uint8Array) => {
+        bytes.fill(7);
+        return bytes;
+      },
+    });
+    try {
+      const candidate = { report: createDemoReport("流山市"), source: "demo" as const, progress: [] };
+      const saved = createComparison([candidate], weights, "車なし");
+      expect(saved.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("exports source reports, weights, evidence and demo limitations in one restorable snapshot", () => {
     const candidate = { report: createDemoReport("流山市"), source: "demo" as const, progress: [], markdown: "元レポート本文" };
     const saved = createComparison([candidate], weights, "車なし");

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ARCHIVE_KEY, createComparison, downloadComparison, readArchive, type SavedComparison } from "./lib/archive";
-import { listRegions, runAssessment, runCommander, type RegionOption } from "./api";
+import { listRegions, runAssessment, runCommander, runSearchComparison, type RegionOption } from "./api";
 import { SalesProposal, ProposalPresentation } from "./Proposal";
-import { isMeasuredCandidate, proposalHeading, proposalStrength } from "./lib/proposal";
+import { MethodComparison } from "./components/MethodComparison";
+import { isDemoCandidate, isMeasuredCandidate, proposalHeading, proposalStrength } from "./lib/proposal";
 import { prioritizeAxis, suggestedWeights } from "./lib/preferences";
 import { buildEvidenceSummary, comparisonAxisLabel } from "./lib/decision";
 import {
@@ -21,7 +22,7 @@ import {
   scoreTone,
   uniqueSources,
 } from "./lib/report";
-import type { AssessmentMode, AxisKey, CandidateComparison, CandidateReport, RunProgress } from "./types";
+import type { AssessmentMode, AxisKey, CandidateComparison, CandidateReport, ComparisonMethodRun, ComparisonMethods, RunProgress } from "./types";
 
 function candidateRequest(name: string, municipalityCode: string, preference: string, enabledAxes: AxisKey[]): string {
   const suffix = preference.trim() ? `。条件: ${preference.trim()}` : "";
@@ -30,6 +31,12 @@ function candidateRequest(name: string, municipalityCode: string, preference: st
 }
 
 function candidateModeLabel(candidate: CandidateReport): string {
+  if (candidate.source === "web" || candidate.report.plan.data_mode === "web_search" || candidate.report.research_context?.method === "web_search") {
+    return candidate.report.research_context?.status === "offline" ? "Web検索未実行" : "Web検索";
+  }
+  if (candidate.report.research_context?.method === "data_context") {
+    return candidate.report.research_context.status === "verified" ? "データ収集型" : "データ未取得";
+  }
   if (candidate.source === "knowledge" || candidate.report.plan.data_mode === "knowledge_only") {
     return candidate.report.execution_steps.some((step) => step.status === "fallback")
       ? "オフライン代替"
@@ -41,7 +48,7 @@ function candidateModeLabel(candidate: CandidateReport): string {
 }
 
 function hasMeasuredData(candidate: CandidateReport): boolean {
-  return ["外部データ", "公式公開データ"].includes(candidateModeLabel(candidate));
+  return isMeasuredCandidate(candidate);
 }
 
 function weightContextSummary(
@@ -103,7 +110,8 @@ function App() {
   const [view, setView] = useState<"research" | "results">("research");
   const [manualWeights, setManualWeights] = useState<Record<AxisKey, number> | null>(null);
   const [enabledAxes, setEnabledAxes] = useState<AxisKey[]>(AXIS_ORDER);
-  const [assessmentMode, setAssessmentMode] = useState<AssessmentMode>("data");
+  const [assessmentMode, setAssessmentMode] = useState<AssessmentMode>("web_search");
+  const [methodResults, setMethodResults] = useState<ComparisonMethods | undefined>(undefined);
   const [selectedAxis, setSelectedAxis] = useState<AxisKey>("convenience");
   const [selectedCandidate, setSelectedCandidate] = useState("");
   const [isRunning, setIsRunning] = useState(false);
@@ -166,6 +174,7 @@ function App() {
   const saveComparison = (comparison: SavedComparison) => {
     setFinished(comparison);
     setCommanderAdvice(comparison.commander ?? null);
+    setMethodResults(comparison.comparisonMethods);
     setView("results");
     const next = [comparison, ...archive.filter(item => item.id !== comparison.id)].slice(0, 10);
     try {
@@ -183,6 +192,7 @@ function App() {
     );
     setCandidateReports(comparison.candidates);
     setCommanderAdvice(comparison.commander ?? null);
+    setMethodResults(comparison.comparisonMethods);
     setManualWeights(comparison.weights);
     setEnabledAxes(restoredAxes.length ? restoredAxes : AXIS_ORDER);
     setPreference(comparison.preference);
@@ -191,11 +201,13 @@ function App() {
     setCommuteMode("");
     setWorkplace("");
     setPriorityAxis("");
-    setAssessmentMode(
-      comparison.candidates.some((candidate) => candidate.report.plan.data_mode === "knowledge_only")
+    setAssessmentMode(comparison.comparisonMethods
+      ? "web_search"
+      : comparison.candidates.some((candidate) => candidate.report.plan.data_mode === "knowledge_only")
         ? "knowledge_only"
-        : "data",
-    );
+        : comparison.candidates.some((candidate) => candidate.report.plan.data_mode === "web_search")
+          ? "web_search"
+          : "data");
     setSelectedRegions(comparison.candidates.flatMap((candidate) => {
       const code = candidate.report.plan.region.municipality_code;
       const match = regions.find((region) => region.municipality_code === code);
@@ -237,7 +249,7 @@ function App() {
     : null;
   const currentCommander = commanderPending ? undefined : commanderAdvice ?? undefined;
   const currentBaseline = JSON.stringify(finished?.weights) === JSON.stringify(weights) ? finished?.baseline : undefined;
-  const proposalInput = { candidates: candidateReports, weights, preference: resultPreference, commander: currentCommander, baseline: currentBaseline };
+  const proposalInput = { candidates: candidateReports, weights, preference: resultPreference, commander: currentCommander, baseline: currentBaseline, comparisonMethods: methodResults };
   useEffect(() => {
     baselineRevision.current += 1;
     setBaselinePending(false);
@@ -251,10 +263,19 @@ function App() {
     : undefined;
   const selectedSourceMetric = selectedResult?.metrics.find((metric) => metric.quality > 0);
   const visibleProgress: RunProgress[] = liveProgress;
+  const comparisonRegionNames = [...new Set([
+    ...selectedNames,
+    ...(methodResults?.data_context?.candidates ?? []).map((candidate) => candidate.report.plan.region.name),
+    ...(methodResults?.web_search?.candidates ?? []).map((candidate) => candidate.report.plan.region.name),
+  ])];
 
   useEffect(() => {
     if (restoringProposal.current) {
       restoringProposal.current = false;
+      setCommanderPending(false);
+      return;
+    }
+    if (assessmentMode === "web_search" && methodResults) {
       setCommanderPending(false);
       return;
     }
@@ -281,6 +302,7 @@ function App() {
           resultPreference,
           advice,
           JSON.stringify(current.weights) === JSON.stringify(weights) ? current.baseline : undefined,
+          methodResults,
         );
         refreshed.id = current.id;
         refreshed.savedAt = current.savedAt;
@@ -308,7 +330,7 @@ function App() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [candidateReports, decision.sharedAxes, enabledAxes, finished?.id, isRunning, resultPreference, weights, commanderRevision]);
+  }, [assessmentMode, candidateReports, decision.sharedAxes, enabledAxes, finished?.id, isRunning, methodResults, resultPreference, weights, commanderRevision]);
 
   const handleBaselineComparison = async () => {
     if (!finished || !currentCommander || commanderPending || !candidateReports.every(isMeasuredCandidate)) return;
@@ -341,6 +363,7 @@ function App() {
   };
 
   const handleWeightChange = (axis: AxisKey, value: number) => {
+    if (assessmentMode === "web_search") return;
     setManualWeights(normalizeWeights({ ...displayedWeights, [axis]: value }, enabledAxes));
   };
 
@@ -382,11 +405,91 @@ function App() {
     setCommanderError("");
     setCommanderPending(false);
     setFinished(null);
+    setCandidateReports([]);
+    setSelectedCandidate("");
+    setMethodResults(undefined);
     setView("research");
     setLiveProgress([]);
     setSelectedCandidate(selectedRegions[0].municipality_code);
 
     try {
+      if (assessmentMode === "web_search") {
+        const dataContextRun = async (): Promise<ComparisonMethodRun> => {
+          const settled = await Promise.allSettled(selectedRegions.map(async (region): Promise<CandidateReport> => {
+            const name = region.name;
+            const progress: string[] = [];
+            const response = await runAssessment({
+              request: candidateRequest(name, region.municipality_code, effectivePreference, enabledAxes),
+              enabled_axes: enabledAxes,
+              weights: Object.fromEntries(enabledAxes.map(axis => [axis, normalizedWeights[axis]])),
+              mode: "data",
+            }, (event) => {
+              progress.push(event.message);
+              setLiveProgress((current) => [...current.slice(-11), { candidate: name, message: `データ収集型: ${event.message}` }]);
+            });
+            setLiveProgress((current) => [...current.slice(-11), { candidate: name, message: "データ収集型: 調査完了" }]);
+            return { report: response.report, markdown: response.markdown, source: "api", progress };
+          }));
+          const candidates = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+          const failed = settled.flatMap((result, index) => result.status === "rejected"
+            ? [`${names[index]}: ${result.reason instanceof Error ? result.reason.message : "調査に失敗しました"}`]
+            : []);
+          if (failed.length) return { status: "failed", candidates, error: failed.join(" / ") };
+          try {
+            const comparison = await runCommander(candidates.map(candidate => candidate.report), effectivePreference || "指定なし", normalizedWeights);
+            return { status: "completed", candidates, comparison };
+          } catch (cause) {
+            return { status: "failed", candidates, error: cause instanceof Error ? cause.message : "データContextの比較回答を取得できませんでした。" };
+          }
+        };
+
+        const webSearchRun = async (): Promise<ComparisonMethodRun> => {
+          try {
+            const response = await runSearchComparison({
+              request: effectivePreference || "指定なし",
+              regions: selectedRegions.map(region => ({ name: region.name, prefecture: region.prefecture, municipality_code: region.municipality_code })),
+              enabled_axes: enabledAxes,
+              weights: Object.fromEntries(enabledAxes.map(axis => [axis, normalizedWeights[axis]])),
+            }, (event) => setLiveProgress((current) => [...current.slice(-11), {
+              candidate: `Web検索${event.candidate && event.candidate !== "Web検索" ? ` / ${event.candidate}` : ""}`,
+              message: event.message,
+            }]));
+            setLiveProgress((current) => [...current.slice(-11), { candidate: "Web検索", message: "比較回答を受信しました" }]);
+            return {
+              status: "completed",
+              candidates: response.candidates.map((candidate): CandidateReport => ({
+                report: candidate.report,
+                markdown: candidate.markdown,
+                source: "web",
+                progress: candidate.report.research_context?.steps.map(step => step.summary) ?? [],
+              })),
+              comparison: response.comparison,
+            };
+          } catch (cause) {
+            const error = cause instanceof Error ? cause.message : "Web検索の比較に失敗しました。";
+            setLiveProgress((current) => [...current.slice(-11), { candidate: "Web検索", message: "この方式は未完了" }]);
+            return { status: "failed", candidates: [], error };
+          }
+        };
+
+        const [dataContext, webSearch] = await Promise.all([dataContextRun(), webSearchRun()]);
+        const methods: ComparisonMethods = { data_context: dataContext, web_search: webSearch };
+        setMethodResults(methods);
+        const primary = dataContext.status === "completed" ? dataContext : webSearch.status === "completed" ? webSearch : undefined;
+        if (!primary?.comparison) {
+          setError(`結果を作成できませんでした。データ収集型: ${dataContext.error ?? "未完了"} / Web検索型: ${webSearch.error ?? "未完了"}`);
+          setView("results");
+          return;
+        }
+        setCandidateReports(primary.candidates);
+        setCommanderAdvice(primary.comparison);
+        setCommanderError("");
+        setSelectedCandidate(primary.candidates[0]?.report.plan.region.municipality_code ?? "");
+        saveComparison(createComparison(primary.candidates, weights, effectivePreference, primary.comparison, undefined, methods));
+        setView("results");
+        return;
+      }
+
       const settled = await Promise.allSettled(
         selectedRegions.map(async (region): Promise<CandidateReport> => {
           const name = region.name;
@@ -426,6 +529,8 @@ function App() {
       }
       const next = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
       setCandidateReports(next);
+      setMethodResults(undefined);
+      setCommanderAdvice(null);
       setSelectedCandidate(next[0]?.report.plan.region.municipality_code ?? "");
       saveComparison(createComparison(next, weights, effectivePreference));
       setView("results");
@@ -442,26 +547,26 @@ function App() {
       <header className="topbar">
         <div className="brand-block">
           <span className="eyebrow">LIVABILITY / LIVING ADVISER</span>
-          <h1>あなたの希望から、選ぶ都市をご提案</h1>
+          <h1>都市選びの回答を比べる</h1>
         </div>
         <div className="topbar-meta">
-          <span className="status-chip">{view === "research" ? "調査画面" : "結果画面"}</span>
-          <span className="meta-mono">{assessmentMode === "knowledge_only" ? "LLM / KNOWLEDGE" : "DATA / PROVIDER"}</span>
+          <span className="status-chip">{view === "research" ? "条件" : "比較回答"}</span>
+          <span className="meta-mono">{assessmentMode === "knowledge_only" ? "一般知識のみ" : assessmentMode === "web_search" ? "データ収集型 + Web検索型" : "データ収集型"}</span>
         </div>
       </header>
 
       <nav className="view-nav" aria-label="画面切り替え">
-        <button type="button" className={view === "research" ? "is-active" : ""} onClick={() => setView("research")}>01 条件・調査</button>
-        <button type="button" className={view === "results" ? "is-active" : ""} disabled={!finished || isRunning} onClick={() => setView("results")}>02 都市選びのご提案</button>
+        <button type="button" className={view === "research" ? "is-active" : ""} onClick={() => setView("research")}>01 条件</button>
+        <button type="button" className={view === "results" ? "is-active" : ""} disabled={(!finished && view !== "results") || isRunning} onClick={() => setView("results")}>02 比較回答</button>
       </nav>
 
       {view === "research" ? <>
       <section className="query-panel panel-rule">
         <div className="query-copy">
           <span className="section-index">01 / INPUT</span>
-          <h2>どんな暮らしをしたいですか？</h2>
+          <h2>希望する暮らしと候補地を入力</h2>
           <p>
-            暮らしの条件から見るべき情報を決め、候補地ごとの調査結果を統合して提案します。
+            同じ条件で2つの方法を実行し、回答の前提・根拠・出典を並べて確認します。
           </p>
         </div>
         <div className="query-controls">
@@ -505,33 +610,35 @@ function App() {
             <small>入力した条件を専門Agentの調査と司令塔の提案に使います。実通勤時間や物件価格など未取得の情報は、確認事項として示します。</small>
           </div>
           <div className="mode-field">
-            <span className="mode-label">評価モード</span>
+            <span className="mode-label">比較方法</span>
             <div className="mode-switch" role="group" aria-label="評価モード">
               <button
                 type="button"
-                className={assessmentMode === "data" ? "is-active" : ""}
-                onClick={() => { setAssessmentMode("data"); setFinished(null); }}
+                className={assessmentMode === "web_search" ? "is-active" : ""}
+                onClick={() => { setAssessmentMode("web_search"); setFinished(null); setMethodResults(undefined); }}
                 disabled={isRunning}
               >
-                データ評価
+                2方式を比較
               </button>
               <button
                 type="button"
-                className={assessmentMode === "knowledge_only" ? "is-active" : ""}
-                onClick={() => { setAssessmentMode("knowledge_only"); setFinished(null); }}
+                className={assessmentMode === "data" ? "is-active" : ""}
+                onClick={() => { setAssessmentMode("data"); setFinished(null); setMethodResults(undefined); }}
                 disabled={isRunning}
               >
-                LLM知識評価
+                データ収集型のみ
               </button>
             </div>
             <small>
               {assessmentMode === "knowledge_only"
-                ? "ナレッジON: 地域データAPI・検索を使わず、LLMの一般知識だけで予備評価します。"
-                : "ナレッジOFF: 地域データを使い、LLMの一般知識で数値を補完しません。"}
+                ? "過去互換の方式です。地域データ・Web検索を使わず、LLMの一般知識で予備評価します。"
+                : assessmentMode === "data"
+                  ? "過去互換の単独方式です。地域データを使い、LLMの一般知識で数値を補いません。"
+                  : "データ収集型とWeb検索型を同じ希望・都市・優先度で実行し、回答を左右で比較します。"}
             </small>
           </div>
           <button className="run-button" onClick={handleRun} disabled={isRunning || selectedRegions.length < 2 || regionsUnavailable}>
-            <span>{isRunning ? "調査・提案中…" : "この条件で提案をつくる"}</span>
+            <span>{isRunning ? "回答を作成中…" : assessmentMode === "web_search" ? "2方式の回答を比べる" : "この条件で提案をつくる"}</span>
             <span className="button-arrow">↗</span>
           </button>
           <details className="advanced-settings">
@@ -570,8 +677,12 @@ function App() {
 
       <section className="research-status panel-rule" aria-live="polite">
         <span className="section-index">02 / RESEARCH</span>
-        <h2>{isRunning ? "各候補地を調査しています" : error ? "調査を完了できませんでした" : finished ? "前回の結果を確認できます" : "調査の準備ができました"}</h2>
-        <p>{isRunning ? "候補地ごとの専門Agentが根拠を調べ、司令塔が暮らしの条件に合わせた提案をまとめています。" : "専門Agentの調査結果を司令塔がまとめ、暮らし方に合った提案を返します。軸別の数値は根拠として後から確認できます。"}</p>
+        <h2>{isRunning ? assessmentMode === "web_search" ? "2つの方法を並行して実行しています" : "各候補地を調査しています" : error ? "調査を完了できませんでした" : finished ? "前回の結果を確認できます" : "調査の準備ができました"}</h2>
+        <p>{isRunning ? assessmentMode === "web_search" ? "データ収集型とWeb検索型を同じ条件で実行しています。片方が未完了でも、もう片方の結果を残します。" : "候補地ごとの専門Agentが根拠を調べ、司令塔が暮らしの条件に合わせた提案をまとめています。" : assessmentMode === "web_search" ? "同じ希望・都市・評価視点を使って、回答の前提を指定・検証できる方式とWeb検索方式を比べます。" : "専門Agentの調査結果を司令塔がまとめ、暮らし方に合った提案を返します。軸別の数値は根拠として後から確認できます。"}</p>
+        {assessmentMode === "web_search" && <div className="method-preparation-grid" aria-label="2つの方式の違い">
+          <article><h3>データ収集型</h3><p>複数の担当Agentが公的・地域データを集めます。</p><ul><li>指標・対象年・単位・出典を確認</li><li>指定した条件と欠損状況を記録</li></ul></article>
+          <article><h3>Web検索型</h3><p>1つのAgentが公式サイトなどを3〜4回検索します。</p><ul><li>見つけた情報を引用付きで回答</li><li>対象年や結果の範囲がそろうとは限りません</li></ul></article>
+        </div>}
         <div className="research-candidates">
           {selectedRegions.map((region) => <div key={region.municipality_code} className="research-candidate">
             <strong>{region.name}</strong><span>{liveProgress.some((event) => event.candidate === region.name && event.message === "調査に失敗しました") ? "失敗" : liveProgress.some((event) => event.candidate === region.name && event.message === "調査が完了しました") ? "調査完了" : isRunning ? "調査中" : "待機中"}</span>
@@ -589,7 +700,15 @@ function App() {
       </section>
       </> : <>
 
-      {commanderPending ? (
+      {assessmentMode === "web_search" && methodResults ? <MethodComparison
+        methods={methodResults}
+        preference={resultPreference}
+        regions={comparisonRegionNames}
+        enabledAxes={enabledAxes}
+        weights={finished?.weights ? normalizeWeights(finished.weights, enabledAxes) : displayedWeights}
+      /> : null}
+
+      {assessmentMode !== "web_search" && (commanderPending ? (
         <section className="decision-hero decision-caveat" aria-labelledby="decision-title" aria-live="polite">
           <span className="section-index">RESULT / SYNTHESIS</span>
           <h2 id="decision-title">あなたに合う街の提案をまとめています。</h2>
@@ -642,9 +761,9 @@ function App() {
           {commanderAdvice?.narrative.next_checks.length ? <><span className="mini-label">次に確かめること</span><ul>{commanderAdvice.narrative.next_checks.map((item) => <li key={item}>{item}</li>)}</ul></> : null}
           {commanderError ? <button type="button" onClick={() => setCommanderRevision((revision) => revision + 1)}>司令塔の提案を再試行</button> : null}
         </section>
-      ) : null}
+      ) : null)}
 
-      {currentCommander && <>
+      {assessmentMode !== "web_search" && currentCommander && <>
         <div className="sales-toolbar"><button type="button" onClick={() => setPresentationOpen(true)}>提案をプレゼンで見る</button><span>結論 → 選ぶ理由 → 比較根拠 → 他候補 → 次の行動</span></div>
         <SalesProposal input={proposalInput} comparing={baselinePending} error={baselineError} onCompare={() => void handleBaselineComparison()} />
       </>}
@@ -757,9 +876,11 @@ function App() {
             </div>
           </div>
           <p className="aside-intro">
-            {weightContextSummary(resultPreference, autoSuggestion.reasons, priorityAxis, Boolean(manualWeights))}
+            {assessmentMode === "web_search"
+              ? "両方式には同じ優先度を渡しました。比較条件を変える場合は、条件画面で変更して再実行してください。"
+              : weightContextSummary(resultPreference, autoSuggestion.reasons, priorityAxis, Boolean(manualWeights))}
           </p>
-          {manualWeights && <button type="button" onClick={() => setManualWeights(null)}>条件から自動設定に戻す</button>}
+          {manualWeights && assessmentMode !== "web_search" && <button type="button" onClick={() => setManualWeights(null)}>条件から自動設定に戻す</button>}
           <div className="weight-list">
             {enabledAxes.map((axis) => (
               <label className="weight-row" key={axis}>
@@ -771,13 +892,14 @@ function App() {
                   step="1"
                   value={displayedWeights[axis]}
                   onChange={(event) => handleWeightChange(axis, Number(event.target.value))}
+                  disabled={assessmentMode === "web_search"}
                 />
                 <span className="weight-value">{Math.round(displayedWeights[axis])}%</span>
               </label>
             ))}
           </div>
           <div className="weight-summary">
-            <span>司令塔へ伝えた共通データ</span>
+            <span>両方式へ伝えた優先度</span>
             <strong>{sharedMetricTotal}/{catalogMetricTotal}</strong>
             <span>指標</span>
           </div>
@@ -900,19 +1022,19 @@ function App() {
         <div className="section-heading compact-heading">
           <div>
             <span className="section-index">07 / REPORT</span>
-            <h2 id="report-title">都市選びの提案レポート</h2>
+            <h2 id="report-title">{assessmentMode === "web_search" ? "2方式の比較レポート" : "都市選びの提案レポート"}</h2>
           </div>
-          <div className="heading-note">比較結果をそのまま持ち出せる単体HTML</div>
+          <div className="heading-note">{assessmentMode === "web_search" ? "回答と前提、出典、未確認事項を保存" : "比較結果をそのまま持ち出せる単体HTML"}</div>
         </div>
-        <p>選ぶ街、軸ごとの優劣、受け入れる弱点と確認事項をまとめます。HTMLはメール添付や印刷にも使えます。</p>
+        <p>{assessmentMode === "web_search" ? "同じ条件で実行した2つの回答を保存します。地域指標などの補足情報は詳細から確認できます。" : "選ぶ街、軸ごとの優劣、受け入れる弱点と確認事項をまとめます。HTMLはメール添付や印刷にも使えます。"}</p>
         <p role="status">{storageNotice}</p>
         {finished && !isRunning && !commanderPending && currentCommander && <>
           <div className="report-actions">
-            <button className="report-primary-action" onClick={() => saveComparison(createComparison(candidateReports, weights, resultPreference, currentCommander, currentBaseline))}>現在の優先度で保存</button>
-            <button onClick={() => downloadComparison(createComparison(candidateReports, weights, resultPreference, currentCommander, currentBaseline), "html")}>HTMLレポートをダウンロード</button>
-            <button onClick={() => downloadComparison(createComparison(candidateReports, weights, resultPreference, currentCommander, currentBaseline), "presentation")}>プレゼンHTML</button>
-            <button onClick={() => downloadComparison(createComparison(candidateReports, weights, resultPreference, currentCommander, currentBaseline), "md")}>Markdown</button>
-            <button onClick={() => downloadComparison(createComparison(candidateReports, weights, resultPreference, currentCommander, currentBaseline), "json")}>JSON</button>
+            <button className="report-primary-action" onClick={() => saveComparison(createComparison(candidateReports, weights, resultPreference, currentCommander, currentBaseline, methodResults))}>現在の優先度で保存</button>
+            <button onClick={() => downloadComparison(createComparison(candidateReports, weights, resultPreference, currentCommander, currentBaseline, methodResults), "html")}>HTMLレポートをダウンロード</button>
+            <button onClick={() => downloadComparison(createComparison(candidateReports, weights, resultPreference, currentCommander, currentBaseline, methodResults), "presentation")}>プレゼンHTML</button>
+            <button onClick={() => downloadComparison(createComparison(candidateReports, weights, resultPreference, currentCommander, currentBaseline, methodResults), "md")}>Markdown</button>
+            <button onClick={() => downloadComparison(createComparison(candidateReports, weights, resultPreference, currentCommander, currentBaseline, methodResults), "json")}>JSON</button>
           </div>
           <details><summary>都市選びの提案レポートをプレビュー（保存時点）</summary><iframe className="report-frame" title="都市選びの提案レポート" srcDoc={finished.html} sandbox="" /></details>
         </>}
@@ -921,7 +1043,7 @@ function App() {
 
       <footer className="app-footer">
         <span>
-          {candidateReports.some((candidate) => candidateModeLabel(candidate) === "デモ表示")
+          {candidateReports.some(isDemoCandidate)
             ? "開発用UI / mock data visible"
             : "出典・基準時点・利用条件を表示"}
         </span>

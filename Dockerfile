@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
 
+# Compose passes BuildKit's predefined proxy args for RUN commands. Do not
+# redeclare them with ARG or ENV, so proxy values stay out of image history.
+
 FROM ghcr.io/astral-sh/uv:0.11.7@sha256:240fb85ab0f263ef12f492d8476aa3a2e4e1e333f7d67fbdd923d00a506a516a AS uv
 
 FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217

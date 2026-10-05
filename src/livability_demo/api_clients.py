@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
+from .network import create_async_http_client
 
 
 class EStatApiClient:
@@ -16,7 +16,7 @@ class EStatApiClient:
 
     def __init__(self, app_id: str, *, timeout_seconds: float = 30.0) -> None:
         self._app_id = app_id
-        self._client = httpx.AsyncClient(timeout=timeout_seconds)
+        self._client = create_async_http_client(timeout=timeout_seconds)
 
     async def get_meta_info(self, stats_data_id: str) -> dict[str, Any]:
         response = await self._client.get(
@@ -62,7 +62,7 @@ class RealEstateLibraryApiClient:
     API_KEY_HEADER = "Ocp-Apim-Subscription-Key"
 
     def __init__(self, api_key: str, *, timeout_seconds: float = 30.0) -> None:
-        self._client = httpx.AsyncClient(
+        self._client = create_async_http_client(
             timeout=timeout_seconds,
             headers={self.API_KEY_HEADER: api_key, "Accept-Encoding": "gzip"},
         )
@@ -98,4 +98,3 @@ class RealEstateLibraryApiClient:
 
     async def close(self) -> None:
         await self._client.aclose()
-

@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
 
+# Compose passes BuildKit's predefined proxy args for npm RUN commands. Do not
+# redeclare them with ARG or ENV, so proxy values stay out of image history.
+
 FROM node:22-alpine AS builder
 
 WORKDIR /app

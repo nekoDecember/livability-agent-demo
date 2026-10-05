@@ -16,6 +16,7 @@ from agent_framework import (
     handler,
 )
 from agent_framework.openai import OpenAIChatClient
+from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, ValidationError
 
 from .catalog import AXIS_AGENT_NAMES
@@ -38,6 +39,7 @@ from .models import (
     KnowledgeOnlyAssessment,
     RegionInfo,
 )
+from .network import create_async_http_client
 from .offline_client import PAYLOAD_MARKER, OfflineChatClient
 from .regional_context import context_metrics, requests_tertiary_education_context
 from .sales_proposal import comparable_metric_codes, validate_sales_proposal
@@ -445,6 +447,7 @@ class AgentTeam:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._openai_client: AsyncOpenAI | None = None
         self._client = self._build_client(settings)
         self.specialists: dict[Axis, Agent[Any]] = {
             axis: Agent(
@@ -529,14 +532,14 @@ class AgentTeam:
             .build()
         )
 
-    @staticmethod
-    def _build_client(settings: Settings) -> Any:
+    def _build_client(self, settings: Settings) -> Any:
         if settings.resolved_llm_mode == "openai":
             assert settings.openai_api_key is not None
-            return OpenAIChatClient(
-                model=settings.openai_model,
+            self._openai_client = AsyncOpenAI(
                 api_key=settings.openai_api_key.get_secret_value(),
+                http_client=create_async_http_client(timeout=settings.agent_timeout_seconds),
             )
+            return OpenAIChatClient(model=settings.openai_model, async_client=self._openai_client)
         return OfflineChatClient()
 
     async def analyze_axes(
@@ -923,6 +926,8 @@ class AgentTeam:
             )
 
     async def close(self) -> None:
+        if self._openai_client is not None:
+            await self._openai_client.close()
         close = getattr(self._client, "close", None)
         if close is not None:
             result = close()

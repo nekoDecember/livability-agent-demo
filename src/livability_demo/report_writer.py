@@ -18,6 +18,8 @@ def _safe_slug(value: str) -> str:
 
 
 def render_markdown(report: AssessmentReport) -> str:
+    if report.plan.data_mode == "web_search":
+        return _render_web_answer(report)
     mock_banner = ""
     if report.plan.data_mode == "mock":
         mock_banner = (
@@ -148,6 +150,45 @@ def render_markdown(report: AssessmentReport) -> str:
         f"{sources}\n\n"
         "## 免責・評価条件\n\n"
         f"{disclaimers}\n"
+    )
+
+
+def _render_web_answer(report: AssessmentReport) -> str:
+    context = report.research_context
+    sources = context.sources if context else []
+
+    def cited(text: str) -> str:
+        return re.sub(
+            r"\[(\d+)\]",
+            lambda match: (
+                f"[{match.group(1)}]({sources[int(match.group(1)) - 1].url})"
+                if 1 <= int(match.group(1)) <= len(sources)
+                else match.group(0)
+            ),
+            text,
+        )
+
+    def bullets(items: list[str]) -> str:
+        return "\n".join(f"- {cited(item)}" for item in items)
+
+    return (
+        f"# {report.plan.region.name}：Web検索型の回答\n\n"
+        f"{cited(report.narrative.executive_summary)}\n\n"
+        "## 暮らしの条件に合う点\n\n"
+        f"{bullets(report.narrative.strengths)}\n\n"
+        "## 譲る条件と注意点\n\n"
+        f"{bullets(report.narrative.cautions)}\n\n"
+        "## 次に確認すること\n\n"
+        f"{bullets(report.narrative.suggested_followups)}\n\n"
+        "## 回答の前提\n\n"
+        f"全候補で共有する検索：{context.search_rounds if context else 0}回。"
+        "指標・対象年・単位をAPI方式と同じように統一した回答ではありません。\n\n"
+        f"{bullets(context.limitations if context else [])}\n\n"
+        "## 出典\n\n"
+        + "\n".join(
+            f"{index + 1}. [{source.title}]({source.url})" for index, source in enumerate(sources)
+        )
+        + "\n"
     )
 
 

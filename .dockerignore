@@ -1,6 +1,8 @@
 .env
 .env.backend
 .git
+.vite
+frontend
 .pytest_cache
 .ruff_cache
 .uv-cache

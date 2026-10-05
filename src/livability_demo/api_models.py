@@ -24,6 +24,44 @@ class AssessmentResponse(BaseModel):
     markdown: str
 
 
+class SearchRegion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    municipality_code: str = Field(pattern=r"^\d{5}$")
+    prefecture: str | None = Field(default=None, max_length=100)
+
+
+class SearchComparisonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request: str = Field(min_length=1, max_length=10_000)
+    regions: list[SearchRegion] = Field(min_length=2, max_length=4)
+    enabled_axes: list[Axis] | None = None
+    weights: dict[Axis, float] | None = None
+
+    @model_validator(mode="after")
+    def validate_inputs(self) -> SearchComparisonRequest:
+        codes = [region.municipality_code for region in self.regions]
+        if len(codes) != len(set(codes)):
+            raise ValueError("候補地が重複しています。")
+        if self.enabled_axes is not None and (
+            not self.enabled_axes or len(self.enabled_axes) != len(set(self.enabled_axes))
+        ):
+            raise ValueError("比較する視点を重複なく1つ以上指定してください。")
+        if self.weights and (
+            any(not isfinite(value) or not 0 <= value <= 100 for value in self.weights.values())
+            or sum(self.weights.values()) <= 0
+        ):
+            raise ValueError("重みは0〜100で、少なくとも1つは正の値にしてください。")
+        return self
+
+
+class SearchComparisonResponse(BaseModel):
+    candidates: list[AssessmentResponse]
+    comparison: CandidateComparison
+
+
 class CandidateComparisonRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

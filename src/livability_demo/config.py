@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5.6-luna"
+    web_search_model: str | None = None
+    web_search_rounds: int = Field(default=3, ge=3, le=4)
+    web_search_timeout_seconds: float = Field(default=180, gt=0, le=600)
     estat_app_id: SecretStr | None = None
     reinfolib_api_key: SecretStr | None = None
 

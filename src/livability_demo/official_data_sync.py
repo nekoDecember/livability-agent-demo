@@ -20,6 +20,7 @@ from zipfile import BadZipFile, ZipFile
 import httpx
 
 from .models import Axis, RegionInfo
+from .network import create_async_http_client
 from .open_data import (
     OpenDataMetricRow,
     OpenDataSnapshot,
@@ -161,7 +162,7 @@ class StatisticsDashboardClient:
         attempts: int = 3,
     ) -> None:
         self._owns_client = http_client is None
-        self._client = http_client or httpx.AsyncClient(
+        self._client = http_client or create_async_http_client(
             timeout=timeout_seconds,
             headers={"User-Agent": "livability-agent-open-data-sync/1.0"},
             follow_redirects=False,
@@ -919,7 +920,7 @@ async def sync_official_open_data(
     target_root = await asyncio.to_thread(lambda: output_dir.expanduser().resolve())
     existing = await asyncio.to_thread(_load_existing_snapshot, target_root)
     owns_http_client = http_client is None
-    client = http_client or httpx.AsyncClient(
+    client = http_client or create_async_http_client(
         timeout=timeout_seconds,
         headers={"User-Agent": "livability-agent-open-data-sync/1.0"},
         follow_redirects=False,

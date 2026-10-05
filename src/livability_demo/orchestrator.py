@@ -25,6 +25,8 @@ from .models import (
     CandidateComparison,
     ExecutionStep,
     MetricEvidence,
+    ResearchContext,
+    ResearchSource,
     SourceReference,
 )
 from .planning import build_plan
@@ -278,6 +280,32 @@ class LivabilityOrchestrator:
                 plan.excluded_axes,
                 unavailable_axes=data_unavailable_axes,
             ),
+            research_context=ResearchContext(
+                method="mock" if self.settings.data_mode == "mock" else "data_context",
+                status="offline" if self.settings.data_mode == "mock" else "verified",
+                controlled_fields=[
+                    "候補都市と自治体コード",
+                    "暮らしの条件と比較する視点",
+                    "指標の定義・単位・対象年・出典",
+                    "比較できる指標と欠損の扱い",
+                    "取得データを各担当に渡す範囲",
+                ],
+                limitations=[
+                    "指定したすべての指標が取得できるとは限りません。未取得は補完しません。",
+                    "確認済みなのはデータの来歴と形式です。回答の正しさや生活上の成果を保証しません。",
+                    "公式公開データモードでは、API・配布ファイルから事前同期した版を使います。",
+                ],
+                sources=list(
+                    {
+                        metric.source.url: ResearchSource(
+                            url=metric.source.url, title=metric.source.source_name
+                        )
+                        for result in axis_results
+                        for metric in result.metrics
+                        if metric.quality > 0 and metric.source.url
+                    }.values()
+                ),
+            ),
         )
         markdown_path, json_path, markdown = self.writer.write(report)
         await notify(
@@ -435,6 +463,11 @@ class LivabilityOrchestrator:
             execution_steps=steps,
             total_elapsed_ms=total_elapsed_ms,
             disclaimers=self._disclaimers(plan.excluded_axes, data_mode="knowledge_only"),
+            research_context=ResearchContext(
+                method="knowledge_only",
+                status="offline",
+                limitations=["旧モードの内在知識による回答です。Web検索は実行していません。"],
+            ),
         )
         markdown_path, json_path, markdown = self.writer.write(report)
         await notify(
