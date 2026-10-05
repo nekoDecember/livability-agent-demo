@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     )
 
     llm_mode: Literal["auto", "mock", "openai"] = "auto"
-    data_mode: Literal["mock", "government_api"] = "mock"
+    data_mode: Literal["mock", "open_data", "government_api"] = "mock"
 
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5.6-luna"
@@ -28,6 +28,18 @@ class Settings(BaseSettings):
     reinfolib_api_key: SecretStr | None = None
 
     outputs_dir: Path = PROJECT_ROOT / "outputs"
+    open_data_dir: Path = PROJECT_ROOT / "open_data"
+    open_data_sync_scope: Literal["nationwide", "selected"] = "nationwide"
+    open_data_sync_regions: str = ""
+    open_data_sync_request_interval_seconds: float = Field(default=0.25, ge=0, le=10)
+    open_data_sync_max_age_hours: float = Field(default=168, ge=0, le=8_760)
+    open_data_sync_timeout_seconds: float = Field(default=180, gt=0, le=600)
+    open_data_include_traffic: bool = True
+    open_data_traffic_csv_url: str = (
+        "https://www.npa.go.jp/publications/statistics/koutsuu/opendata/2024/honhyo_2024.csv"
+    )
+    open_data_traffic_reference_year: int = Field(default=2024, ge=2000, le=2100)
+    open_data_traffic_expected_sha256: str | None = None
     devui_host: str = "127.0.0.1"
     devui_port: int = Field(default=8080, ge=1, le=65535)
     devui_auto_open: bool = True
@@ -47,6 +59,14 @@ class Settings(BaseSettings):
             return "openai" if self.openai_api_key else "mock"
         return self.llm_mode
 
+    @property
+    def open_data_region_names(self) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                name.strip() for name in self.open_data_sync_regions.split(",") if name.strip()
+            )
+        )
+
     def validate_runtime(self) -> None:
         if self.resolved_llm_mode == "openai" and not self.openai_api_key:
             raise ValueError("LLM_MODE=openai requires OPENAI_API_KEY.")
@@ -57,9 +77,7 @@ class Settings(BaseSettings):
             if not self.reinfolib_api_key:
                 missing.append("REINFOLIB_API_KEY")
             if missing:
-                raise ValueError(
-                    "DATA_MODE=government_api requires: " + ", ".join(missing)
-                )
+                raise ValueError("DATA_MODE=government_api requires: " + ", ".join(missing))
 
     def validate_api_runtime(self) -> None:
         self.validate_runtime()

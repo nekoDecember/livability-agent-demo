@@ -1,0 +1,2 @@
+region_code,region_name,prefecture,comparison_group,axis,metric_code,value,quality,source_id,sample_count,note
+EXAMPLE,例示市,例示県,入力形式の例,convenience,retail_density,12.3,0.9,ESTAT-EXAMPLE,,架空値・実データとして使用禁止

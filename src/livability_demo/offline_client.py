@@ -18,15 +18,14 @@ from agent_framework import (
 
 from .deterministic_analysis import (
     build_axis_narrative,
-    build_final_narrative,
+    build_commander_narrative,
     build_knowledge_only_assessment,
 )
 from .models import (
     Axis,
     AxisEvidence,
     AxisNarrative,
-    AxisResult,
-    FinalNarrative,
+    CommanderNarrative,
     KnowledgeOnlyAssessment,
 )
 
@@ -62,7 +61,7 @@ class OfflineChatClient(FunctionInvocationLayer, BaseChatClient):
         self,
         messages: Sequence[Message],
         options: Mapping[str, Any],
-    ) -> AxisNarrative | FinalNarrative | KnowledgeOnlyAssessment | str:
+    ) -> AxisNarrative | CommanderNarrative | KnowledgeOnlyAssessment | str:
         # Agent Framework 1.13 carries Agent.instructions in chat options rather than
         # materializing a system Message for every provider.
         system = f"{_system_text(messages)}\n{options.get('instructions', '')}"
@@ -84,13 +83,8 @@ class OfflineChatClient(FunctionInvocationLayer, BaseChatClient):
                 raise ValueError(f"Offline specialist payload is missing axis={axis}")
             return build_axis_narrative(AxisEvidence.model_validate(evidence_dict))
 
-        if "FINAL_EVALUATOR" in system:
-            results = [AxisResult.model_validate(item) for item in payload["axis_results"]]
-            return build_final_narrative(
-                payload["region_name"],
-                float(payload["overall_score"]),
-                results,
-            )
+        if "COMMANDER_COMPARISON" in system:
+            return build_commander_narrative(payload)
 
         return "オフラインモードです。地域評価エージェントから実行してください。"
 
@@ -101,7 +95,7 @@ class OfflineChatClient(FunctionInvocationLayer, BaseChatClient):
     ) -> ChatResponse[Any]:
         validated = await self._validate_options(options)
         value = self._build_value(messages, validated)
-        if isinstance(value, (AxisNarrative, FinalNarrative, KnowledgeOnlyAssessment)):
+        if isinstance(value, (AxisNarrative, CommanderNarrative, KnowledgeOnlyAssessment)):
             text = value.model_dump_json()
         else:
             text = value

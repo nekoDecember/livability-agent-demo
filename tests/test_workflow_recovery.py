@@ -12,13 +12,17 @@ from livability_demo.models import Axis
 from livability_demo.offline_client import PAYLOAD_MARKER
 from livability_demo.orchestrator import LivabilityOrchestrator
 from livability_demo.planning import build_plan
-from livability_demo.scoring import score_axis, score_overall
+from livability_demo.scoring import calculate_research_confidence, score_axis
 
 
 def settings(tmp_path, **kwargs):
     return Settings(
-        _env_file=None, llm_mode="mock", data_mode="mock", outputs_dir=tmp_path,
-        mock_latency_ms=0, **kwargs,
+        _env_file=None,
+        llm_mode="mock",
+        data_mode="mock",
+        outputs_dir=tmp_path,
+        mock_latency_ms=0,
+        **kwargs,
     )
 
 
@@ -93,7 +97,7 @@ async def test_data_failure_drains_siblings_and_never_runs_agents(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_overall_score_requires_complete_selected_axes(tmp_path):
+async def test_research_confidence_requires_complete_selected_axes(tmp_path):
     provider = MockRegionalDataProvider(latency_ms=0)
     region = await provider.resolve_region("流山市")
     plan = build_plan("流山市", region, data_mode="mock", enabled_axes=[Axis.HOUSING, Axis.FAMILY])
@@ -101,7 +105,7 @@ async def test_overall_score_requires_complete_selected_axes(tmp_path):
     result = score_axis(evidence, build_axis_narrative(evidence))
     for results in ([result], [result, result]):
         with pytest.raises(ValueError, match="exactly one"):
-            score_overall(plan, results)
+            calculate_research_confidence(plan, results)
 
 
 @pytest.mark.asyncio

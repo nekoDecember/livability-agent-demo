@@ -17,6 +17,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .api_models import (
     AssessmentRequest,
     AssessmentResponse,
+    CandidateComparisonRequest,
+    CandidateComparisonResponse,
     ChatCompletionMessage,
     ChatCompletionRequest,
 )
@@ -84,10 +86,7 @@ def _completion_json(
 
 
 def _sse_event(event: str, payload: Any) -> str:
-    return (
-        f"event: {event}\n"
-        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-    )
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 async def _completion_stream(
@@ -191,6 +190,20 @@ def create_app(
             ],
         }
 
+    @app.get("/v1/agent/regions", dependencies=[Depends(require_auth)])
+    async def regions(request: Request) -> dict[str, list[dict[str, str]]]:
+        available = await request.app.state.orchestrator.provider.list_regions()
+        return {
+            "regions": [
+                {
+                    "name": region.name,
+                    "prefecture": region.prefecture or "",
+                    "municipality_code": region.municipality_code,
+                }
+                for region in available
+            ]
+        }
+
     @app.post(
         "/v1/agent/assessments",
         response_model=AssessmentResponse,
@@ -200,9 +213,26 @@ def create_app(
         report, markdown = await request.app.state.orchestrator.assess(
             body.request,
             enabled_axes=body.enabled_axes,
+            weights=body.weights,
             mode=body.mode,
         )
         return AssessmentResponse(report=report, markdown=markdown)
+
+    @app.post(
+        "/v1/agent/comparisons",
+        response_model=CandidateComparisonResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def comparison(
+        request: Request,
+        body: CandidateComparisonRequest,
+    ) -> CandidateComparisonResponse:
+        result = await request.app.state.orchestrator.compare_candidates(
+            body.reports,
+            user_request=body.request,
+            weights=body.weights or None,
+        )
+        return CandidateComparisonResponse(comparison=result)
 
     @app.post("/v1/agent/assessments/stream", dependencies=[Depends(require_auth)])
     async def assessment_stream(request: Request, body: AssessmentRequest):
@@ -216,6 +246,7 @@ def create_app(
                 body.request,
                 progress=progress,
                 enabled_axes=body.enabled_axes,
+                weights=body.weights,
                 mode=body.mode,
             )
         )

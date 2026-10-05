@@ -139,6 +139,21 @@ METRIC_CATALOG: dict[Axis, tuple[MetricSpec, ...]] = {
             "https://www.e-stat.go.jp/regional-statistics/ssdsview/",
             "2023",
         ),
+        MetricSpec(
+            "residential_land_price",
+            "住宅地の地価調査基準地中央値",
+            "円/㎡",
+            "lower_is_better",
+            0.20,
+            5_000,
+            350_000,
+            "MLIT-KSJ-L02-2026",
+            "国土交通省 国土数値情報 都道府県地価調査",
+            "L02-2026",
+            "https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-L02-2026.html",
+            "2026-07-01",
+            "住宅地の基準地点中央値。家賃・売買成約価格ではない",
+        ),
     ),
     Axis.FAMILY: (
         MetricSpec(
@@ -197,6 +212,21 @@ METRIC_CATALOG: dict[Axis, tuple[MetricSpec, ...]] = {
             "XKT006",
             "https://www.reinfolib.mlit.go.jp/help/apiManual/xkt006/",
             "公開データ基準年",
+        ),
+        MetricSpec(
+            "tertiary_education_campuses",
+            "大学・短大・高専の掲載キャンパス数",
+            "キャンパス",
+            "context_only",
+            0.05,
+            0,
+            100,
+            "MLIT-KSJ-P29-2023",
+            "国土交通省 国土数値情報 学校",
+            "P29-2023",
+            "https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-P29-2023.html",
+            "2023",
+            "市内掲載キャンパス数のみ。稼働状況・定員・学部・通学時間は示さない",
         ),
     ),
     Axis.SAFETY: (
@@ -340,4 +370,3 @@ AXIS_AGENT_NAMES: dict[Axis, str] = {
     Axis.SAFETY: "SafetyAndDisasterAgent",
     Axis.FUTURE: "CityFutureAgent",
 }
-

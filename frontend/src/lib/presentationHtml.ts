@@ -1,0 +1,9 @@
+import { proposalSlides, type ProposalInput } from "./proposal";
+
+const escape = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+
+export function renderPresentationHtml(input: ProposalInput): string {
+  const slides = proposalSlides(input);
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Livability｜都市選びの提案プレゼン</title><style>
+  *{box-sizing:border-box}html{scroll-snap-type:y mandatory;scroll-behavior:smooth}body{margin:0;background:#f3eee3;color:#293f35;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN",sans-serif;line-height:1.6}.slide{min-height:100svh;padding:6vh 7vw;scroll-snap-align:start;display:flex;flex-direction:column;justify-content:center;border-bottom:1px solid #c8c9bd}.slide:first-child{background:#294e45;color:#fffdf7}small{letter-spacing:.15em}h1{font-size:clamp(28px,4vw,64px);line-height:1.3;margin:20px 0}p{font-size:clamp(17px,2vw,26px);max-width:1100px}ul{padding-left:1.3em;max-width:1100px}li{font-size:clamp(15px,1.5vw,23px);margin:16px 0;white-space:pre-line}nav{display:flex;gap:30px;align-items:center;margin-top:24px}a{color:inherit;text-underline-offset:6px}@media print{html{scroll-snap-type:none}.slide{height:auto;min-height:95vh;break-after:page;padding:24px}nav{display:none}li{font-size:17px}}</style></head><body>${slides.map((slide, index) => `<section class="slide" id="slide-${index + 1}"><small>LIVABILITY / PROPOSAL ${index + 1} / ${slides.length}</small><h1>${escape(slide.title)}</h1><p>${escape(slide.lead)}</p><ul>${slide.items.map(item => `<li>${escape(item)}</li>`).join("")}</ul><nav>${index > 0 ? `<a href="#slide-${index}">← 前へ</a>` : ""}<span>${index + 1} / ${slides.length}</span>${index < slides.length - 1 ? `<a href="#slide-${index + 2}">次へ →</a>` : ""}</nav></section>`).join("")}</body></html>`;
+}

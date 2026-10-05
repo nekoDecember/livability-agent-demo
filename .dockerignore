@@ -7,5 +7,6 @@
 .venv
 __pycache__
 outputs
+open_data
 tests
 *.pyc

@@ -27,6 +27,8 @@ dev = [
 livability-devui = "livability_demo.app:main"
 livability-run = "livability_demo.cli:main"
 livability-api = "livability_demo.api:main"
+livability-open-data-build = "livability_demo.open_data_cli:main"
+livability-open-data-sync = "livability_demo.official_data_cli:main"
 
 [build-system]
 requires = ["hatchling"]

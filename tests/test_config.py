@@ -30,14 +30,15 @@ def test_backend_environment_is_canonical_and_secret_free() -> None:
     assert values["OPENWEBUI_ADMIN_ENV_FILE"] == ""
 
 
-def test_local_backend_environment_matches_example_when_present() -> None:
+def test_local_backend_environment_contains_only_documented_keys_when_present() -> None:
     actual = PROJECT_ROOT / ".env.backend"
     if not actual.exists():
         return
 
     expected_keys = set(_env_values(PROJECT_ROOT / ".env.backend.example"))
     actual_keys = set(_env_values(actual))
-    assert actual_keys == expected_keys
+    # Newly documented settings all have safe defaults, so an older local file remains valid.
+    assert actual_keys <= expected_keys
 
 
 def test_openwebui_override_uses_canonical_project_environment() -> None:

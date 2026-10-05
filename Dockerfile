@@ -14,7 +14,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" \
     API_HOST=0.0.0.0 \
     API_PORT=8091 \
-    OUTPUTS_DIR=/data/outputs
+    OUTPUTS_DIR=/data/outputs \
+    OPEN_DATA_DIR=/data/open-data
 
 RUN apt-get update \
     && apt-get install --no-install-recommends -y tini \
@@ -27,7 +28,7 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --locked --no-dev --no-editable \
     && useradd --create-home --home-dir /home/livability --uid 10001 livability \
-    && mkdir -p /data/outputs "$HOME" \
+    && mkdir -p /data/outputs /data/open-data "$HOME" \
     && chown -R livability:livability /data "$HOME"
 
 USER livability

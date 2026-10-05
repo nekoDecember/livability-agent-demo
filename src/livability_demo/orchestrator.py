@@ -14,6 +14,7 @@ from .data_providers import (
     build_data_provider,
     resolve_region_without_external_data,
 )
+from .deterministic_analysis import build_candidate_narrative
 from .models import (
     AXIS_LABELS,
     ApiCallTrace,
@@ -21,14 +22,14 @@ from .models import (
     Axis,
     AxisEvidence,
     AxisResult,
+    CandidateComparison,
     ExecutionStep,
     MetricEvidence,
-    RegionInfo,
     SourceReference,
 )
 from .planning import build_plan
 from .report_writer import ReportWriter
-from .scoring import score_axis, score_overall
+from .scoring import calculate_research_confidence, score_axis
 
 ProgressCallback = Callable[[str], Awaitable[None]]
 
@@ -57,6 +58,7 @@ class LivabilityOrchestrator:
         *,
         progress: ProgressCallback | None = None,
         enabled_axes: Iterable[Axis] | None = None,
+        weights: dict[Axis, float] | None = None,
         mode: Literal["data", "knowledge_only"] = "data",
     ) -> tuple[AssessmentReport, str]:
         if mode == "knowledge_only":
@@ -64,55 +66,115 @@ class LivabilityOrchestrator:
                 user_request,
                 progress=progress,
                 enabled_axes=enabled_axes,
+                weights=weights,
             )
 
         notify = progress or _noop_progress
         started = perf_counter()
         steps: list[ExecutionStep] = []
+        configured_axes = tuple(enabled_axes) if enabled_axes is not None else None
 
         plan_started = perf_counter()
         region = await asyncio.wait_for(
             self.provider.resolve_region(user_request),
             timeout=self.settings.data_timeout_seconds,
         )
-        plan = build_plan(
+        initial_plan = build_plan(
             user_request,
             region,
             data_mode=self.settings.data_mode,
-            enabled_axes=enabled_axes,
+            enabled_axes=configured_axes,
+            requested_weights=weights,
         )
+        available_axes = set(
+            await asyncio.wait_for(
+                self.provider.available_axes(region),
+                timeout=self.settings.data_timeout_seconds,
+            )
+        )
+        data_unavailable_axes = [
+            axis for axis in initial_plan.enabled_axes if axis not in available_axes
+        ]
+        unavailable_reasons = {
+            axis: await self.provider.axis_unavailability_reason(region, axis)
+            for axis in data_unavailable_axes
+        }
+        if data_unavailable_axes:
+            usable_axes = [axis for axis in initial_plan.enabled_axes if axis in available_axes]
+            if not usable_axes:
+                raise ValueError(f"{region.name}には評価可能な公式公開データ軸がありません。")
+            usable_weights = (
+                {axis: value for axis, value in weights.items() if axis in usable_axes}
+                if weights
+                else None
+            )
+            plan = build_plan(
+                user_request,
+                region,
+                data_mode=self.settings.data_mode,
+                enabled_axes=usable_axes,
+                requested_weights=usable_weights
+                if usable_weights and sum(usable_weights.values()) > 0
+                else None,
+            )
+            unavailable_labels = "、".join(AXIS_LABELS[axis] for axis in data_unavailable_axes)
+            plan = plan.model_copy(
+                update={
+                    "unavailable_axes": data_unavailable_axes,
+                    "unavailable_axis_reasons": unavailable_reasons,
+                    "agent_selection_reason": (
+                        f"{plan.agent_selection_reason}。評価できない軸を除外: {unavailable_labels}"
+                    ),
+                }
+            )
+        else:
+            plan = initial_plan
         plan_ms = int((perf_counter() - plan_started) * 1000)
         steps.append(
             ExecutionStep(
                 name="受付・計画エージェント",
                 status="completed",
                 elapsed_ms=plan_ms,
-                detail=(
-                    f"{region.name} / {plan.agent_selection_reason} / "
-                    f"{plan.weight_reason}"
-                ),
+                detail=(f"{region.name} / {plan.agent_selection_reason} / {plan.weight_reason}"),
             )
         )
         await notify(
-            f"受付・計画: {region.name}を特定し、"
-            f"{plan.agent_selection_reason}（{plan_ms} ms）"
+            f"受付・計画: {region.name}を特定し、{plan.agent_selection_reason}（{plan_ms} ms）"
         )
 
+        research_started = perf_counter()
+        data_source_label = (
+            "公式公開データスナップショット"
+            if self.settings.data_mode == "open_data"
+            else "地域データAPI"
+        )
         await notify(
-            f"{len(plan.enabled_axes)}領域のAPI/MCPデータ取得を並列開始しました"
+            f"{len(plan.enabled_axes)}軸の担当エージェントが{data_source_label}を個別に収集し、"
+            "根拠を分析します"
         )
-        evidence_by_axis = await self._fetch_all_axes(
-            region,
-            plan.enabled_axes,
-            notify,
+        evidence_by_axis, narratives, used_fallback, detail = await self.team.research_axes(
+            region=region,
+            provider=self.provider,
+            enabled_axes=plan.enabled_axes,
+            user_request=user_request,
+            progress=notify,
         )
+        research_ms = int((perf_counter() - research_started) * 1000)
         data_elapsed = max(evidence.elapsed_ms for evidence in evidence_by_axis.values())
+        await notify(
+            f"{len(plan.enabled_axes)}軸の担当エージェントが情報収集と分析を完了しました"
+            f"（{research_ms} ms）"
+        )
         for axis in plan.enabled_axes:
             evidence = evidence_by_axis[axis]
             endpoints = ", ".join(call.endpoint for call in evidence.api_calls)
             steps.append(
                 ExecutionStep(
-                    name=f"{AXIS_LABELS[axis]}データAPI",
+                    name=(
+                        f"{AXIS_LABELS[axis]}公式公開データ"
+                        if self.settings.data_mode == "open_data"
+                        else f"{AXIS_LABELS[axis]}データAPI"
+                    ),
                     status="completed",
                     elapsed_ms=evidence.elapsed_ms,
                     detail=endpoints,
@@ -121,66 +183,84 @@ class LivabilityOrchestrator:
         api_count = sum(len(item.api_calls) for item in evidence_by_axis.values())
         steps.append(
             ExecutionStep(
-                name="地域データAPI群",
+                name=(
+                    "公式公開データ群"
+                    if self.settings.data_mode == "open_data"
+                    else "地域データAPI群"
+                ),
                 status="completed",
                 elapsed_ms=data_elapsed,
                 detail=(
-                    f"{len(plan.enabled_axes)}領域・{api_count} APIツールを並列取得"
+                    f"{len(plan.enabled_axes)}領域・{api_count} "
+                    + (
+                        "担当Agentが並列参照"
+                        if self.settings.data_mode == "open_data"
+                        else "担当AgentがAPIツールを並列参照"
+                    )
                 ),
             )
         )
         for axis in plan.excluded_axes:
+            unavailable = axis in data_unavailable_axes
             steps.append(
                 ExecutionStep(
-                    name=f"{AXIS_LABELS[axis]}データAPI・専門エージェント",
+                    name=(
+                        f"{AXIS_LABELS[axis]}公式公開データ・専門エージェント"
+                        if self.settings.data_mode == "open_data"
+                        else f"{AXIS_LABELS[axis]}データAPI・専門エージェント"
+                    ),
                     status="skipped",
                     elapsed_ms=0,
-                    detail="Agent構成指定によりAPI取得・分析・採点を未実行",
+                    detail=(
+                        "この軸の値を照合できず、分析・採点から除外"
+                        if unavailable_reasons.get(axis) == "unverified"
+                        else "この自治体の値が今回のデータ集になく、分析・採点から除外"
+                        if unavailable_reasons.get(axis) == "not_found_for_region"
+                        else "今回のデータ集にこの軸の指標がなく、分析・採点から除外"
+                        if unavailable
+                        else "Agent構成指定によりAPI取得・分析・採点を未実行"
+                    ),
                 )
             )
 
-        agents_started = perf_counter()
-        await notify(
-            "WorkflowBuilderで"
-            f"{len(plan.enabled_axes)}専門エージェントへfan-outし、並列実行しています"
-        )
-        narratives, used_fallback, detail = await self.team.analyze_axes(evidence_by_axis)
-        agents_ms = int((perf_counter() - agents_started) * 1000)
+        is_parallel = len(plan.enabled_axes) > 1
         steps.append(
             ExecutionStep(
-                name=f"{len(plan.enabled_axes)}専門エージェント（並列）",
+                name=(
+                    f"{len(plan.enabled_axes)}専門エージェント（並列）"
+                    if is_parallel
+                    else "1専門エージェント（単独）"
+                ),
                 status="fallback" if used_fallback else "completed",
-                elapsed_ms=agents_ms,
+                elapsed_ms=research_ms,
                 detail=detail,
             )
         )
-        await notify(
-            f"{len(plan.enabled_axes)}専門エージェントの分析が完了しました"
-            f"（{agents_ms} ms）"
-        )
+
+        from .deterministic_analysis import build_axis_summary
 
         axis_results = [
-            score_axis(evidence_by_axis[axis], narratives[axis])
+            score_axis(
+                evidence_by_axis[axis],
+                narratives[axis].model_copy(
+                    update={"summary": build_axis_summary(evidence_by_axis[axis], user_request)}
+                ),
+            )
             for axis in plan.enabled_axes
         ]
-        overall_score, overall_confidence = score_overall(plan, axis_results)
-
-        evaluator_started = perf_counter()
-        final_narrative, evaluator_fallback, evaluator_detail = (
-            await self.team.create_final_narrative(
-                region_name=region.name,
-                overall_score=overall_score,
-                axis_results=axis_results,
-                excluded_axes=plan.excluded_axes,
-            )
+        research_confidence = calculate_research_confidence(plan, axis_results)
+        candidate_narrative = build_candidate_narrative(
+            region_name=region.name,
+            results=axis_results,
+            user_request=user_request,
+            weights=plan.weights,
         )
-        evaluator_ms = int((perf_counter() - evaluator_started) * 1000)
         steps.append(
             ExecutionStep(
-                name="総合評価エージェント",
-                status="fallback" if evaluator_fallback else "completed",
-                elapsed_ms=evaluator_ms,
-                detail=evaluator_detail,
+                name="候補別の根拠整理",
+                status="completed",
+                elapsed_ms=0,
+                detail="候補単体の所見を記録。比較提案はコマンダーが全候補の調査後に作成",
             )
         )
 
@@ -189,13 +269,15 @@ class LivabilityOrchestrator:
             report_id=str(uuid4()),
             generated_at=datetime.now().astimezone(),
             plan=plan,
-            overall_score=overall_score,
-            overall_confidence=overall_confidence,
+            research_confidence=research_confidence,
             axis_results=axis_results,
-            narrative=final_narrative,
+            narrative=candidate_narrative,
             execution_steps=steps,
             total_elapsed_ms=total_elapsed_ms,
-            disclaimers=self._disclaimers(plan.excluded_axes),
+            disclaimers=self._disclaimers(
+                plan.excluded_axes,
+                unavailable_axes=data_unavailable_axes,
+            ),
         )
         markdown_path, json_path, markdown = self.writer.write(report)
         await notify(
@@ -204,12 +286,26 @@ class LivabilityOrchestrator:
         )
         return report, markdown
 
+    async def compare_candidates(
+        self,
+        reports: Sequence[AssessmentReport],
+        *,
+        user_request: str,
+        weights: dict[Axis, float] | None = None,
+    ) -> CandidateComparison:
+        return await self.team.compare_candidates(
+            reports=reports,
+            user_request=user_request,
+            weights=weights or {axis: 20.0 for axis in Axis},
+        )
+
     async def _assess_knowledge_only(
         self,
         user_request: str,
         *,
         progress: ProgressCallback | None = None,
         enabled_axes: Iterable[Axis] | None = None,
+        weights: dict[Axis, float] | None = None,
     ) -> tuple[AssessmentReport, str]:
         """Run a no-regional-API assessment using the LLM's general knowledge only."""
 
@@ -224,6 +320,7 @@ class LivabilityOrchestrator:
             region,
             data_mode="knowledge_only",
             enabled_axes=enabled_axes,
+            requested_weights=weights,
         )
         plan_ms = int((perf_counter() - plan_started) * 1000)
         steps.append(
@@ -260,12 +357,14 @@ class LivabilityOrchestrator:
 
         evaluator_started = perf_counter()
         await notify("LLM知識のみ評価を開始しました（最新統計の取得なし）")
-        knowledge_assessment, used_fallback, detail = (
-            await self.team.create_knowledge_only_assessment(
-                user_request=user_request,
-                region_name=region.name,
-                enabled_axes=plan.enabled_axes,
-            )
+        (
+            knowledge_assessment,
+            used_fallback,
+            detail,
+        ) = await self.team.create_knowledge_only_assessment(
+            user_request=user_request,
+            region_name=region.name,
+            enabled_axes=plan.enabled_axes,
         )
         evaluator_ms = int((perf_counter() - evaluator_started) * 1000)
         expected_axes = list(plan.enabled_axes)
@@ -324,23 +423,13 @@ class LivabilityOrchestrator:
                 detail=detail,
             )
         )
-        steps.append(
-            ExecutionStep(
-                name="総合評価エージェント",
-                status="fallback" if used_fallback else "completed",
-                elapsed_ms=0,
-                detail="LLM知識のみの軸別見立てから結論を生成",
-            )
-        )
-
-        overall_score, overall_confidence = score_overall(plan, axis_results)
+        research_confidence = calculate_research_confidence(plan, axis_results)
         total_elapsed_ms = int((perf_counter() - started) * 1000)
         report = AssessmentReport(
             report_id=str(uuid4()),
             generated_at=datetime.now().astimezone(),
             plan=plan,
-            overall_score=overall_score,
-            overall_confidence=overall_confidence,
+            research_confidence=research_confidence,
             axis_results=axis_results,
             narrative=knowledge_assessment.narrative,
             execution_steps=steps,
@@ -354,66 +443,50 @@ class LivabilityOrchestrator:
         )
         return report, markdown
 
-    async def _fetch_all_axes(
-        self,
-        region: RegionInfo,
-        axes: Sequence[Axis],
-        notify: ProgressCallback,
-    ) -> dict[Axis, AxisEvidence]:
-        async def fetch(axis: Axis) -> tuple[Axis, AxisEvidence]:
-            evidence = await asyncio.wait_for(
-                self.provider.fetch_axis(region, axis),
-                timeout=self.settings.data_timeout_seconds,
-            )
-            if (
-                evidence.axis != axis
-                or evidence.region.municipality_code != region.municipality_code
-            ):
-                raise ValueError(f"Evidence identity mismatch for axis={axis.value}")
-            if evidence.data_mode != self.settings.data_mode:
-                raise ValueError(f"Evidence data mode mismatch for axis={axis.value}")
-            if evidence.data_mode == "government_api" and any(m.is_mock for m in evidence.metrics):
-                raise ValueError("Live assessment cannot contain mock metrics")
-            if not any(m.quality > 0 and m.direction != "context_only" for m in evidence.metrics):
-                raise ValueError(f"No scorable evidence for axis={axis.value}")
-            return axis, evidence
-
-        tasks = [asyncio.create_task(fetch(axis)) for axis in axes]
-        results: dict[Axis, AxisEvidence] = {}
-        try:
-            for completed in asyncio.as_completed(tasks):
-                axis, evidence = await completed
-                results[axis] = evidence
-                await notify(
-                    f"{AXIS_LABELS[axis]}データ取得完了: "
-                    f"{len(evidence.api_calls)} API（{evidence.elapsed_ms} ms）"
-                )
-        finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-        return results
-
     def _disclaimers(
         self,
         excluded_axes: Sequence[Axis],
         *,
         data_mode: str | None = None,
+        unavailable_axes: Sequence[Axis] = (),
     ) -> list[str]:
         active_data_mode = data_mode or self.settings.data_mode
+        usage_terms_note = (
+            "公式公開データの版ごとの利用条件、出典表示、第三者権利は"
+            "スナップショット更新時にも再確認してください。"
+            if active_data_mode == "open_data"
+            else "公開APIの商用利用条件、出典表示、保存条件は本番化前に"
+            "法務・セキュリティ確認が必要です。"
+        )
         items = [
-            "総合点と各軸点はPoC独自の相対評価であり、政府・自治体の公式評価ではありません。",
+            "総合点と各軸点は共通の指標範囲で計算した独自評価であり、政府・自治体の公式評価ではありません。",
             "市区町村平均のため、町丁目・駅勢圏ごとの地域差は表しません。",
             "施設数は定員、空き、品質を保証しません。将来人口は推計であり予測の確実性を保証しません。",
-            "公開APIの商用利用条件、出典表示、保存条件は本番化前に法務・セキュリティ確認が必要です。",
+            usage_terms_note,
             "Google系APIは使用していません。",
         ]
         if active_data_mode == "mock":
             items.insert(
                 0,
-                "すべての指標値はデモ用に生成したモックで、"
-                "実在地域の実測値ではありません。",
+                "すべての指標値はデモ用に生成したモックで、実在地域の実測値ではありません。",
+            )
+        if active_data_mode == "open_data":
+            items.insert(
+                0,
+                "実行時の契約API・HTMLスクレイピングは使わず、"
+                "事前検証済みの公式公開データスナップショットだけを参照しています。",
+            )
+            items.insert(
+                1,
+                "スナップショットにない指標は推測せず採点対象外とし、"
+                "欠損分は信頼度へ反映しています。",
+            )
+        if unavailable_axes:
+            labels = "、".join(AXIS_LABELS[axis] for axis in unavailable_axes)
+            items.insert(
+                0,
+                f"{labels}は対象地域で軸単位の値を確認できないため、"
+                "総合点から除外して残りの軸へウェイトを再配分しています。",
             )
         if active_data_mode == "knowledge_only":
             items.insert(

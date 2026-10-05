@@ -1,6 +1,30 @@
 name: livability-agent
 
 services:
+  livability-open-data-sync:
+    build:
+      context: .
+    command:
+      - livability-open-data-sync
+      - --if-enabled
+      - --allow-stale
+    env_file:
+      - path: .env.backend
+        required: false
+    environment:
+      OPEN_DATA_DIR: /data/open-data
+    user: "${LIVABILITY_HOST_UID:-501}:${LIVABILITY_HOST_GID:-20}"
+    volumes:
+      - ./open_data:/data/open-data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    restart: "no"
+    networks:
+      - livability-internal
+
   livability-agent-api:
     build:
       context: .
@@ -14,8 +38,12 @@ services:
       OUTPUTS_DIR: /data/outputs
     ports:
       - "${LIVABILITY_API_BIND_ADDRESS:-127.0.0.1}:${LIVABILITY_API_PORT:-8091}:8091"
+    depends_on:
+      livability-open-data-sync:
+        condition: service_completed_successfully
     volumes:
       - livability-outputs:/data/outputs
+      - ./open_data:/data/open-data:ro
     cap_drop:
       - ALL
     security_opt:

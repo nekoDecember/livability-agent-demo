@@ -139,9 +139,6 @@ export function createDemoReport(name: string): AssessmentReport {
     group: "同程度の人口規模の市区町村（デモ設定）",
   };
   const axisResults = AXIS_ORDER.map((axis, index) => axisResultFor(name, axis, scores[axis], index));
-  const overallScore = Math.round(
-    (axisResults.reduce((sum, result) => sum + result.score, 0) / axisResults.length) * 10,
-  ) / 10;
 
   return {
     report_id: `demo-${name}`,
@@ -170,16 +167,11 @@ export function createDemoReport(name: string): AssessmentReport {
       weight_reason: "5軸を均等評価",
       data_mode: "mock",
     },
-    overall_score: overallScore,
-    overall_confidence: 0.5,
+    research_confidence: 0.5,
     axis_results: axisResults,
     narrative: {
       executive_summary:
-        name === "武蔵野市"
-          ? "移動と生活サービスは強い一方、住まいコストが比較上の大きな制約になります。"
-          : name === "柏市"
-            ? "移動の選択肢と生活サービスのバランスがよく、条件次第で住まいの選択肢も残ります。"
-            : "医療・子育てと将来性に強みがあり、住まいコストと交通の優先順位が判断の分かれ目です。",
+        `${name}の候補別調査記録です。デモ値の軸別所見を、比較後に司令塔が利用者条件へ照らして提案します。`,
       strengths: ["評価軸を分解して比較できる", "出典と基準日を追跡できる"],
       cautions: ["すべてデモ値", "市区町村平均のため町丁目差は表さない"],
       suggested_followups: ["住宅費を優先した場合の重みを試す", "候補地域を追加する"],
@@ -204,10 +196,10 @@ export function createDemoReport(name: string): AssessmentReport {
         detail: "WorkflowBuilderのfan-out/fan-inで5専門エージェントを並列実行",
       },
       {
-        name: "総合評価エージェント",
+        name: "候補別の根拠整理",
         status: "completed",
-        elapsed_ms: 74,
-        detail: "総合評価エージェントが要約",
+        elapsed_ms: 0,
+        detail: "候補単体の調査を記録。候補間の提案はコマンダーが担当",
       },
     ],
     total_elapsed_ms: 602,

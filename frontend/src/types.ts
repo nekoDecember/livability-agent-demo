@@ -31,6 +31,7 @@ export interface MetricEvidence {
   source: SourceReference;
   sample_count?: number | null;
   quality: number;
+  missing_reason?: "not_collected" | "not_found_for_region" | "unverified" | null;
   note?: string | null;
   is_mock: boolean;
 }
@@ -76,10 +77,12 @@ export interface AssessmentPlan {
   weights: Partial<Record<AxisKey, number>>;
   enabled_axes: AxisKey[];
   excluded_axes: AxisKey[];
+  unavailable_axes?: AxisKey[];
+  unavailable_axis_reasons?: Partial<Record<AxisKey, "not_collected" | "not_found_for_region" | "unverified">>;
   agent_selection_reason: string;
   preferences: string[];
   weight_reason: string;
-  data_mode: "mock" | "government_api" | "knowledge_only";
+  data_mode: "mock" | "open_data" | "government_api" | "knowledge_only";
 }
 
 export interface ExecutionStep {
@@ -93,8 +96,7 @@ export interface AssessmentReport {
   report_id: string;
   generated_at: string;
   plan: AssessmentPlan;
-  overall_score: number;
-  overall_confidence: number;
+  research_confidence: number;
   axis_results: AxisResult[];
   narrative: {
     executive_summary: string;
@@ -116,6 +118,30 @@ export interface AssessmentResponse {
   markdown: string;
 }
 
+export interface CommanderNarrative {
+  summary: string;
+  reasons: string[];
+  tradeoffs: string[];
+  next_checks: string[];
+  confidence: number;
+  proposal_title?: string;
+  recommendation_strength?: "recommended" | "conditional" | "hypothesis" | "undecided";
+  supporting_metric_codes?: string[];
+  candidate_positions?: { region_code: string; fit_summary: string; selection_condition: string }[];
+}
+
+export interface KnowledgeBaseline {
+  candidates: CandidateReport[];
+  commander: CandidateComparison;
+}
+
+export interface CandidateComparison {
+  recommended_region_code: string | null;
+  shared_axes: AxisKey[];
+  narrative: CommanderNarrative;
+  used_fallback: boolean;
+}
+
 export interface CandidateReport {
   markdown?: string;
   report: AssessmentReport;
@@ -126,6 +152,7 @@ export interface CandidateReport {
 export interface AssessmentRequest {
   request: string;
   enabled_axes?: AxisKey[];
+  weights?: Partial<Record<AxisKey, number>>;
   mode?: AssessmentMode;
 }
 

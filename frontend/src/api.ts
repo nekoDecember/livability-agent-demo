@@ -1,10 +1,29 @@
 import type {
+  AssessmentReport,
   AssessmentRequest,
   AssessmentResponse,
+  CandidateComparison,
   RunProgress,
+  AxisKey,
 } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
+
+export interface RegionOption {
+  name: string;
+  prefecture: string;
+  municipality_code: string;
+}
+
+export async function listRegions(): Promise<RegionOption[]> {
+  const response = await fetch(`${API_BASE_URL}/v1/agent/regions`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`自治体一覧を取得できませんでした (${response.status})`);
+  const body = await response.json() as { regions?: RegionOption[] };
+  if (!Array.isArray(body.regions)) throw new Error("自治体一覧の形式が正しくありません");
+  return body.regions;
+}
 
 interface ServerEvent {
   event: string;
@@ -89,4 +108,29 @@ export async function runAssessment(
   if (streamError) throw new Error(streamError);
   if (!result) throw new Error("The API stream ended without a report.");
   return result;
+}
+
+export async function runCommander(
+  reports: AssessmentReport[],
+  request: string,
+  weights: Partial<Record<AxisKey, number>>,
+): Promise<CandidateComparison> {
+  const response = await fetch(`${API_BASE_URL}/v1/agent/comparisons`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ reports, request, weights }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || `候補地を統合できませんでした (${response.status})`);
+  }
+  const body = await response.json() as { comparison?: CandidateComparison };
+  if (!body.comparison || !body.comparison.narrative) {
+    throw new Error("コマンダーの応答形式が正しくありません");
+  }
+  const regionCodes = new Set(reports.map((report) => report.plan.region.municipality_code));
+  if (body.comparison.recommended_region_code && !regionCodes.has(body.comparison.recommended_region_code)) {
+    throw new Error("コマンダーが候補に含まれない自治体を選びました");
+  }
+  return body.comparison;
 }

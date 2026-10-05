@@ -7,11 +7,21 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+.vite/
 *.py[cod]
 .DS_Store
 outputs/*.json
 outputs/*.md
+outputs/*.html
+outputs/*.png
 !outputs/.gitkeep
+
+open_data/manifest.json
+open_data/metrics.csv
+open_data/statistics-dashboard-api-*.json
+open_data/honhyo_*.csv
+open_data/L02-*_GML.zip
+open_data/P29-*_GML.zip
 
 frontend/node_modules/
 frontend/dist/

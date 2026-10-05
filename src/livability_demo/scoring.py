@@ -32,15 +32,19 @@ def score_axis(evidence: AxisEvidence, narrative: AxisNarrative) -> AxisResult:
     )
 
 
-def score_overall(plan: AssessmentPlan, axis_results: list[AxisResult]) -> tuple[float, float]:
+def calculate_research_confidence(
+    plan: AssessmentPlan,
+    axis_results: list[AxisResult],
+) -> float:
+    """Summarize evidence quality only; this is not a livability or candidate score."""
+
     by_axis = {result.axis: result for result in axis_results}
     if len(by_axis) != len(axis_results) or set(by_axis) != set(plan.enabled_axes):
-        raise ValueError("Overall scoring requires exactly one result for every enabled axis")
+        raise ValueError("Research confidence requires exactly one result for every enabled axis")
     usable = [(axis, weight) for axis, weight in plan.weights.items() if axis in by_axis]
     total_weight = sum(weight for _, weight in usable)
     if total_weight <= 0:
-        raise ValueError("No axis results available for overall scoring.")
+        raise ValueError("No axis results available for research confidence.")
 
-    overall = sum(by_axis[axis].score * weight for axis, weight in usable) / total_weight
     confidence = sum(by_axis[axis].confidence * weight for axis, weight in usable) / total_weight
-    return round(overall, 1), round(confidence, 2)
+    return round(confidence, 2)

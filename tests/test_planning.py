@@ -26,6 +26,50 @@ def test_preferences_change_weights_and_still_sum_to_100() -> None:
     assert sum(plan.weights.values()) == 100
 
 
+def test_plain_living_conditions_change_priorities() -> None:
+    plan = build_plan(
+        "流山市の住みやすさを評価して。条件: 車なし・子育て・都内へ週3通勤",
+        REGION,
+        data_mode="open_data",
+    )
+    assert abs(plan.weights[Axis.CONVENIENCE] - plan.weights[Axis.FAMILY]) <= 0.11
+    assert plan.weights[Axis.CONVENIENCE] > plan.weights[Axis.HOUSING]
+    assert "車に頼らない移動" in plan.preferences
+    assert "鉄道・公共交通" not in plan.preferences
+
+
+def test_car_commute_does_not_increase_rail_or_convenience_priority() -> None:
+    plan = build_plan(
+        "高崎市の住みやすさを評価して。条件: 高崎駅周辺勤務・独身25歳・車通勤",
+        REGION,
+        data_mode="open_data",
+    )
+    assert plan.weights[Axis.CONVENIENCE] == 20
+    assert "鉄道・公共交通" not in plan.preferences
+
+
+def test_rail_commute_is_explicitly_weighted() -> None:
+    plan = build_plan(
+        "高崎市の住みやすさを評価して。条件: 新幹線通勤",
+        REGION,
+        data_mode="open_data",
+    )
+    assert plan.weights[Axis.CONVENIENCE] > 20
+    assert "鉄道・公共交通" in plan.preferences
+
+
+def test_reviewed_ui_weights_override_inferred_weights() -> None:
+    plan = build_plan(
+        "流山市を車なし・子育てで評価して",
+        REGION,
+        data_mode="mock",
+        requested_weights={Axis.CONVENIENCE: 10, Axis.HOUSING: 60, Axis.FAMILY: 30},
+    )
+    assert plan.weights[Axis.HOUSING] == 60
+    assert plan.weights[Axis.CONVENIENCE] == 10
+    assert "画面で確認した重み" in plan.weight_reason
+
+
 def test_explicit_weight_is_respected() -> None:
     plan = build_plan("流山市を子育て40%で評価して", REGION, data_mode="mock")
     assert plan.weights[Axis.FAMILY] == 40
@@ -69,8 +113,7 @@ def test_programmatic_enabled_axes_are_the_upper_bound() -> None:
 
 def test_all_agents_cannot_be_excluded() -> None:
     request = (
-        "移動Agentを除外、住まいAgentを除外、子育てAgentを除外、"
-        "防災Agentを除外、将来性Agentを除外"
+        "移動Agentを除外、住まいAgentを除外、子育てAgentを除外、防災Agentを除外、将来性Agentを除外"
     )
     with pytest.raises(ValueError, match="少なくとも1つ"):
         build_plan(request, REGION, data_mode="mock")

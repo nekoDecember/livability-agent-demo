@@ -1,0 +1,19 @@
+{
+  "sources": [
+    {
+      "source_id": "ESTAT-EXAMPLE",
+      "source_name": "e-Stat 社会・人口統計体系（例）",
+      "publisher": "総務省統計局 / 独立行政法人統計センター",
+      "download_page_url": "https://www.e-stat.go.jp/regional-statistics/ssdsview",
+      "license_id": "COMMERCIAL-USE-ALLOWED",
+      "license_url": "https://www.e-stat.go.jp/terms-of-use",
+      "attribution": "政府統計の総合窓口（e-Stat）の公開データを加工",
+      "retrieved_at": "2026-09-20",
+      "reference_date": "2023",
+      "original_file": "raw/replace-with-official-download.csv",
+      "commercial_use_note": "e-Stat利用規約を確認し、出典と加工内容を表示",
+      "third_party_rights_note": "対象表に第三者の著作権表示がないことを取得時に確認",
+      "transformation_note": "自治体コードで抽出し、人口で除算して指標化。欠損は補完しない"
+    }
+  ]
+}
