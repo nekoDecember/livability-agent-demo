@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -17,12 +19,32 @@ from .official_data_sync import (
 from .open_data import load_open_data_snapshot
 
 
+def check_output_writable(output: Path) -> None:
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(prefix=".livability-write-check-", dir=output):
+            pass
+    except OSError as exc:
+        if exc.errno not in (13, 30):  # permission denied / read-only filesystem
+            raise
+        owner = output.stat() if output.exists() else None
+        owner_text = f"{owner.st_uid}:{owner.st_gid}" if owner else "unknown"
+        raise PermissionError(
+            f"Official data directory is not writable: {output}; "
+            f"sync UID:GID={os.geteuid()}:{os.getegid()}, directory owner={owner_text}. "
+            "Check the host directory permissions and read-only mount settings. "
+            "Set LIVABILITY_HOST_UID and LIVABILITY_HOST_GID together if needed; "
+            "empty values select the mount owner in Compose. Existing data was not changed."
+        ) from exc
+
+
 async def _run(args: argparse.Namespace, settings: Settings) -> int:
     if args.if_enabled and settings.data_mode != "open_data":
         print(f"Official data sync skipped because DATA_MODE={settings.data_mode}.")
         return 0
 
     output: Path = args.output or settings.open_data_dir
+    check_output_writable(output)
     all_regions = args.all_regions or (
         not args.region and settings.open_data_sync_scope == "nationwide"
     )

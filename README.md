@@ -15,6 +15,21 @@ docker compose --env-file .env.backend up --build -d --wait
 
 APIは8091番で待ち受けます。
 
+## 初期同期のファイル権限
+
+同期コンテナは `./open_data` の所有者UID・GIDを調べ、そのユーザーで書き込みます。Mac用やLinux用のIDを固定しません。既存ファイルの所有者・権限は変更しません。APIは別の非rootユーザーでデータを読み取ります。
+
+`.env.backend` の `LIVABILITY_HOST_UID` と `LIVABILITY_HOST_GID` は、通常は両方空欄で使います。以前の設定例から固定値をコピーした場合は、その値を消してください。明示した値は自動判定より優先します。必要ならホストの `id -u` と `id -g` の値を両方設定してください。
+
+同期はネットワーク取得の前に書き込みを確認します。権限エラーでは実行UID・GIDとフォルダ所有者を表示します。フォルダが読み取り専用の場合や、ACL・SELinux・共有フォルダの制限がある場合は、その環境で許可が必要です。`chmod 777` や一括の所有者変更は行いません。
+
+```sh
+# 更新版の取得とUID/GID設定の見直し後、同期とAPI・フロントを起動し直す
+docker compose --env-file .env.backend up --build -d --wait
+# 同期のログを確認する
+docker compose --env-file .env.backend logs livability-open-data-sync
+```
+
 ## LANアクセスとHTTPプロキシ
 
 Composeの専用フロントはホストの`0.0.0.0`で待ち受けます。同じLAN上の端末からは、MacのLAN IPと`.env.backend`の`LIVABILITY_FRONTEND_PORT`を使い、`http://<MacのLAN IP>:<ポート>`を開きます。APIのホスト側ポートは`127.0.0.1`に限定され、ブラウザからはフロントの同一オリジンAPI経由で接続します。内部APIキーはブラウザへ渡りません。
